@@ -1,0 +1,32 @@
+<!doctype html>
+<html lang="ja">
+  <head>
+    <meta charset="UTF-8" />
+    <meta
+      http-equiv="Content-Security-Policy"
+      content="default-src 'self'; style-src 'self' 'unsafe-inline'; script-src 'self'"
+    />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>音声編集アプリ</title>
+    <link rel="stylesheet" href="./style.css" />
+  </head>
+  <body>
+    <div class="app">
+      <header class="toolbar">
+        <button id="open-file-btn" class="btn-primary">ファイルを開く</button>
+      </header>
+
+      <main class="content">
+        <p id="file-path" class="placeholder">
+          「ファイルを開く」から MP3 / WAV / M4A ファイルを選択してください。
+        </p>
+        <p class="hint">
+          ※ ステップ1では起動確認とファイル選択のみに対応しています。<br />
+          波形表示・編集・書き出しは今後のステップで実装します。
+        </p>
+      </main>
+    </div>
+
+    <script type="module" src="./main.js"></script>
+  </body>
+</html>
