@@ -2,10 +2,11 @@ import { app, BrowserWindow, ipcMain, dialog, protocol } from 'electron'
 import { join, extname } from 'path'
 import { createReadStream, statSync } from 'fs'
 import { Readable } from 'stream'
-import { generatePeaks } from './peaks.js'
+import { EditSession } from './editSession.js'
 
-// 現在開いている音声ファイルのパス。app-audio プロトコルが配信する対象。
-let currentFilePath = null
+// 編集セッション（版履歴とカット処理を管理）。
+// app-audio プロトコルは常に現在の版のファイルを配信する。
+const session = new EditSession()
 
 // レンダラーの <audio> が音声を「ストリーム再生」するためのカスタムスキーム。
 // ファイル全体をメモリに読み込まず、Range リクエストで必要な範囲だけを配信する。
@@ -21,12 +22,14 @@ function mimeFor(filePath) {
     case '.mp3': return 'audio/mpeg'
     case '.wav': return 'audio/wav'
     case '.m4a': return 'audio/mp4'
+    case '.flac': return 'audio/flac' // カット後の一時ファイルは可逆の FLAC
     default: return 'application/octet-stream'
   }
 }
 
-// app-audio://... へのリクエストを、現在のファイルを Range 対応でストリーム配信して応答する。
+// app-audio://... へのリクエストを、現在の版のファイルを Range 対応でストリーム配信して応答する。
 function handleAudioRequest(request) {
+  const currentFilePath = session.currentPath()
   if (!currentFilePath) {
     return new Response('No file loaded', { status: 404 })
   }
@@ -118,11 +121,14 @@ ipcMain.handle('dialog:openAudioFile', async () => {
   return result.filePaths[0]
 })
 
-// 指定ファイルを現在のファイルに設定し、波形描画用のピークデータを生成して返す。
+// 指定ファイルを読み込み、版履歴を初期化して波形ピーク・長さを返す。
 ipcMain.handle('audio:load', async (_event, filePath) => {
-  currentFilePath = filePath
-  const { peaks, duration } = await generatePeaks(filePath)
-  return { peaks, duration }
+  return session.load(filePath)
+})
+
+// 選択範囲（複数可）をまとめてカットし、新しい版の波形ピーク・長さを返す。
+ipcMain.handle('audio:cut', async (_event, regions) => {
+  return session.cut(regions)
 })
 
 app.whenReady().then(() => {
@@ -140,4 +146,9 @@ app.on('window-all-closed', () => {
   if (process.platform !== 'darwin') {
     app.quit()
   }
+})
+
+// 終了時に一時ファイル（カット結果）を掃除する
+app.on('will-quit', () => {
+  session.reset()
 })

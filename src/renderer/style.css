@@ -106,6 +106,46 @@ body {
   color: #b6b6c2;
 }
 
+.edit-tools {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+  padding: 12px 14px;
+  background: #202028;
+  border: 1px solid #2c2c36;
+  border-radius: 8px;
+}
+
+.edit-hint {
+  margin: 0;
+  font-size: 12.5px;
+  color: #9a9aa6;
+}
+
+.edit-actions {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  flex-wrap: wrap;
+}
+
+.region-count {
+  font-size: 13px;
+  color: #b6b6c2;
+  margin-right: 4px;
+}
+
+.btn-danger {
+  color: #fff;
+  background: #d64545;
+  border-color: #d64545;
+  font-weight: 600;
+}
+
+.btn-danger:hover:not(:disabled) {
+  background: #c23b3b;
+}
+
 .placeholder {
   color: #77778a;
   font-size: 14px;

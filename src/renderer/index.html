@@ -27,6 +27,18 @@
           <span id="time" class="time">0:00.0 / 0:00.0</span>
         </section>
 
+        <section id="edit-tools" class="edit-tools" hidden>
+          <p class="edit-hint">
+            波形上をドラッグして範囲を選択（複数可）。範囲をクリックで選択、端をドラッグで微調整できます。
+          </p>
+          <div class="edit-actions">
+            <span id="region-count" class="region-count">選択範囲: 0</span>
+            <button id="delete-region-btn" class="btn" disabled>選択範囲を削除</button>
+            <button id="clear-regions-btn" class="btn" disabled>すべて解除</button>
+            <button id="cut-btn" class="btn btn-danger" disabled>カット</button>
+          </div>
+        </section>
+
         <p id="placeholder" class="placeholder">
           「ファイルを開く」から MP3 / WAV / M4A ファイルを選択してください。
         </p>
