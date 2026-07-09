@@ -28,6 +28,14 @@ body {
   border-bottom: 1px solid #35353f;
 }
 
+.status {
+  font-size: 13px;
+  color: #9a9aa6;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
 .btn-primary {
   padding: 8px 18px;
   font-size: 14px;
@@ -37,39 +45,70 @@ body {
   border: none;
   border-radius: 6px;
   cursor: pointer;
+  flex-shrink: 0;
 }
 
 .btn-primary:hover {
   background: #2f6fe0;
 }
 
-.btn-primary:active {
-  background: #2a63c9;
+.btn-primary:disabled {
+  opacity: 0.5;
+  cursor: default;
 }
 
 .content {
   flex: 1;
   display: flex;
   flex-direction: column;
-  align-items: center;
-  justify-content: center;
-  gap: 16px;
+  gap: 20px;
   padding: 24px;
-  text-align: center;
 }
 
-#file-path {
-  font-size: 15px;
-  word-break: break-all;
-  max-width: 800px;
+.waveform {
+  width: 100%;
+  min-height: 160px;
+  background: #16161b;
+  border: 1px solid #2c2c36;
+  border-radius: 8px;
+  padding: 8px 12px;
 }
 
-#file-path.placeholder {
-  color: #9a9aa6;
+.transport {
+  display: flex;
+  align-items: center;
+  gap: 10px;
 }
 
-.hint {
+.btn {
+  padding: 7px 16px;
+  font-size: 14px;
+  color: #e8e8ec;
+  background: #34343f;
+  border: 1px solid #43434f;
+  border-radius: 6px;
+  cursor: pointer;
+}
+
+.btn:hover:not(:disabled) {
+  background: #3f3f4c;
+}
+
+.btn:disabled {
+  opacity: 0.4;
+  cursor: default;
+}
+
+.time {
+  margin-left: 8px;
   font-size: 13px;
-  line-height: 1.7;
+  font-variant-numeric: tabular-nums;
+  color: #b6b6c2;
+}
+
+.placeholder {
   color: #77778a;
+  font-size: 14px;
+  text-align: center;
+  margin-top: 40px;
 }

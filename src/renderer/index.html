@@ -4,7 +4,7 @@
     <meta charset="UTF-8" />
     <meta
       http-equiv="Content-Security-Policy"
-      content="default-src 'self'; style-src 'self' 'unsafe-inline'; script-src 'self'"
+      content="default-src 'self'; media-src 'self' app-audio:; script-src 'self'; style-src 'self' 'unsafe-inline'; img-src 'self' data:"
     />
     <meta name="viewport" content="width=device-width, initial-scale=1.0" />
     <title>音声編集アプリ</title>
@@ -14,15 +14,21 @@
     <div class="app">
       <header class="toolbar">
         <button id="open-file-btn" class="btn-primary">ファイルを開く</button>
+        <span id="status" class="status"></span>
       </header>
 
       <main class="content">
-        <p id="file-path" class="placeholder">
+        <div id="waveform" class="waveform"></div>
+
+        <section id="transport" class="transport" hidden>
+          <button id="play-btn" class="btn">再生</button>
+          <button id="pause-btn" class="btn" disabled>一時停止</button>
+          <button id="stop-btn" class="btn" disabled>停止</button>
+          <span id="time" class="time">0:00.0 / 0:00.0</span>
+        </section>
+
+        <p id="placeholder" class="placeholder">
           「ファイルを開く」から MP3 / WAV / M4A ファイルを選択してください。
-        </p>
-        <p class="hint">
-          ※ ステップ1では起動確認とファイル選択のみに対応しています。<br />
-          波形表示・編集・書き出しは今後のステップで実装します。
         </p>
       </main>
     </div>

@@ -1,8 +1,11 @@
 import { resolve } from 'path'
-import { defineConfig } from 'electron-vite'
+import { defineConfig, externalizeDepsPlugin } from 'electron-vite'
 
 export default defineConfig({
   main: {
+    // ffmpeg-static / ffprobe-static はバイナリのパスを実行時の __dirname から
+    // 解決するため、バンドルせず外部依存として扱う
+    plugins: [externalizeDepsPlugin()],
     build: {
       rollupOptions: {
         input: {
@@ -12,6 +15,7 @@ export default defineConfig({
     }
   },
   preload: {
+    plugins: [externalizeDepsPlugin()],
     build: {
       rollupOptions: {
         input: {
