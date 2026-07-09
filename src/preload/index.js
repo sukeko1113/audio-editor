@@ -7,5 +7,9 @@ contextBridge.exposeInMainWorld('api', {
 
   // 指定パスの音声を読み込み、波形描画用のピークデータと長さ(秒)を返す
   // 返り値: { peaks: number[], duration: number }
-  loadAudio: (filePath) => ipcRenderer.invoke('audio:load', filePath)
+  loadAudio: (filePath) => ipcRenderer.invoke('audio:load', filePath),
+
+  // 選択範囲（[{start,end}, ...]）をまとめてカットする
+  // 返り値: カット後の { peaks: number[], duration: number }
+  cutRegions: (regions) => ipcRenderer.invoke('audio:cut', regions)
 })
