@@ -15,6 +15,7 @@ const regionCountEl = document.getElementById('region-count')
 const deleteRegionBtn = document.getElementById('delete-region-btn')
 const clearRegionsBtn = document.getElementById('clear-regions-btn')
 const cutBtn = document.getElementById('cut-btn')
+const saveBtn = document.getElementById('save-btn')
 
 const REGION_COLOR = 'rgba(91, 141, 239, 0.22)'
 const REGION_COLOR_SELECTED = 'rgba(255, 176, 60, 0.42)'
@@ -24,6 +25,7 @@ let regionsPlugin = null
 let selectedRegion = null
 let loadToken = 0 // 音声の読み込み/カットごとにインクリメントし、キャッシュを回避する
 let busy = false // カット処理中などの多重操作を防ぐ
+let canSave = false // カット等の編集結果（中間ファイル）が存在するか＝保存可能か
 
 // 秒を m:ss.d 形式に整形
 function formatTime(seconds) {
@@ -54,6 +56,8 @@ function updateEditControls() {
   deleteRegionBtn.disabled = busy || !selectedRegion
   clearRegionsBtn.disabled = busy || count === 0
   cutBtn.disabled = busy || count === 0
+  // 保存は編集結果（カット後の中間ファイル）が存在するときのみ有効
+  saveBtn.disabled = busy || !canSave
 }
 
 function selectRegion(region) {
@@ -141,6 +145,7 @@ async function openAndLoad() {
 
   const token = ++loadToken
   busy = true
+  canSave = false // 新規読み込み時点では未編集なので保存は無効
   statusEl.textContent = '波形を生成中…'
   openFileBtn.disabled = true
   placeholderEl.hidden = true
@@ -193,6 +198,7 @@ async function doCut() {
     await renderWaveform(peaks, duration, token)
     if (token !== loadToken) return
 
+    canSave = true // カット結果（中間ファイル）ができたので保存可能
     setTransportState('stopped')
     clearSelection()
     updateTime()
@@ -207,6 +213,33 @@ async function doCut() {
       openFileBtn.disabled = false
       updateEditControls()
     }
+  }
+}
+
+// 現在の編集結果を、選んだフォーマットでディスクへ書き出す
+async function doSave() {
+  if (busy || !canSave) return
+
+  busy = true
+  openFileBtn.disabled = true
+  const prevStatus = statusEl.textContent
+  statusEl.textContent = '保存中…'
+  updateEditControls()
+
+  try {
+    const result = await window.api.exportAudio()
+    if (result) {
+      statusEl.textContent = `保存しました: ${result.path}`
+    } else {
+      // 保存ダイアログでキャンセルされた場合は元の表示に戻す
+      statusEl.textContent = prevStatus
+    }
+  } catch (err) {
+    statusEl.textContent = `保存に失敗しました: ${err.message}`
+  } finally {
+    busy = false
+    openFileBtn.disabled = false
+    updateEditControls()
   }
 }
 
@@ -236,6 +269,7 @@ clearRegionsBtn.addEventListener('click', () => {
 })
 
 cutBtn.addEventListener('click', doCut)
+saveBtn.addEventListener('click', doSave)
 
 // Delete / Backspace キーで選択中の範囲を削除
 document.addEventListener('keydown', (e) => {

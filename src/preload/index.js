@@ -11,5 +11,9 @@ contextBridge.exposeInMainWorld('api', {
 
   // 選択範囲（[{start,end}, ...]）をまとめてカットする
   // 返り値: カット後の { peaks: number[], duration: number }
-  cutRegions: (regions) => ipcRenderer.invoke('audio:cut', regions)
+  cutRegions: (regions) => ipcRenderer.invoke('audio:cut', regions),
+
+  // 現在の編集結果を、保存ダイアログで選んだフォーマット/パスへ書き出す
+  // 返り値: 保存成功時 { path }、キャンセル時 null（失敗時は例外）
+  exportAudio: () => ipcRenderer.invoke('audio:export')
 })
