@@ -25,6 +25,22 @@
           <button id="pause-btn" class="btn" disabled>一時停止</button>
           <button id="stop-btn" class="btn" disabled>停止</button>
           <span id="time" class="time">0:00.0 / 0:00.0</span>
+          <span class="zoom-controls">
+            <span class="zoom-label">ズーム</span>
+            <button id="zoom-out-btn" class="btn zoom-btn" disabled>−</button>
+            <input
+              id="zoom-slider"
+              class="zoom-slider"
+              type="range"
+              min="0"
+              max="100"
+              step="1"
+              value="0"
+              disabled
+            />
+            <button id="zoom-in-btn" class="btn zoom-btn" disabled>＋</button>
+            <span id="zoom-value" class="zoom-value">×1.0</span>
+          </span>
         </section>
 
         <section id="edit-tools" class="edit-tools" hidden>
