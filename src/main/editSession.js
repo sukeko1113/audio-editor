@@ -164,6 +164,79 @@ export class EditSession {
     return { peaks, duration }
   }
 
+  /**
+   * 音量を調整して新しい版を積む。カット処理と完全に同じフロー
+   * （ffmpeg でディスク上のファイルを処理 → 中間ファイル生成 → 波形取得）。
+   * region が指定されればその範囲のみ、null なら全体に適用する。元ファイルは変更しない。
+   * @param {number} factor 倍率（1=変更なし, 0.5=半分, 2=2倍, 0=ミュート）
+   * @param {{start:number,end:number}|null} region
+   */
+  async applyVolume(factor, region) {
+    const cur = this.current()
+    if (!cur) throw new Error('音声が読み込まれていません')
+    if (!Number.isFinite(factor) || factor < 0) {
+      throw new Error('音量の倍率が不正です')
+    }
+
+    const outPath = this.nextTempPath('flac')
+    await this.runFfmpegVolume(cur.path, factor, region, cur.duration, outPath)
+
+    // 調整後の実際の長さ・波形を新しいファイルから取得
+    const { peaks, duration } = await generatePeaks(outPath)
+
+    // やり直し（redo）側の版が残っていれば破棄してから新しい版を積む
+    this.discardRedoTail()
+    this.versions.push({
+      path: outPath,
+      duration,
+      peaks,
+      isTemp: true,
+      op: { type: 'volume', factor, region: region || null }
+    })
+    this.index = this.versions.length - 1
+
+    return { peaks, duration }
+  }
+
+  // ffmpeg の volume フィルタで音量を調整する。カット処理と同じくディスク上を
+  // ストリーム処理し、可逆の FLAC で中間ファイルを出力する。
+  // region 指定時は enable='between(t,start,end)' で対象範囲を限定する。
+  runFfmpegVolume(inputPath, factor, region, duration, outPath) {
+    return new Promise((resolve, reject) => {
+      const fmt = (n) => n.toFixed(6)
+      let filter
+      if (region) {
+        const start = Math.max(0, Math.min(region.start, duration))
+        const end = Math.max(start, Math.min(region.end, duration))
+        filter = `volume=${fmt(factor)}:enable='between(t,${fmt(start)},${fmt(end)})'`
+      } else {
+        filter = `volume=${fmt(factor)}`
+      }
+
+      const args = [
+        '-v', 'error',
+        '-nostdin',
+        '-i', inputPath,
+        '-af', filter,
+        '-c:a', 'flac',
+        '-y',
+        outPath
+      ]
+
+      const proc = spawn(ffmpegPath, args)
+      let err = ''
+      proc.stderr.on('data', (d) => { err += d.toString() })
+      proc.on('error', reject)
+      proc.on('close', (code) => {
+        if (code !== 0) {
+          reject(new Error(`ffmpeg volume failed (code ${code}): ${err.trim()}`))
+          return
+        }
+        resolve()
+      })
+    })
+  }
+
   // カット等の編集が1回でも行われているか（＝カット後の中間ファイルが存在するか）
   hasEdits() {
     const cur = this.current()

@@ -131,6 +131,12 @@ ipcMain.handle('audio:cut', async (_event, regions) => {
   return session.cut(regions)
 })
 
+// 音量を調整し、新しい版の波形ピーク・長さを返す。
+// region が null なら全体、{start,end} 指定時はその範囲のみに適用する。
+ipcMain.handle('audio:volume', async (_event, { factor, region }) => {
+  return session.applyVolume(factor, region)
+})
+
 // 現在の編集結果を、保存ダイアログで選んだフォーマット/パスへ書き出す。
 // キャンセル時は null、成功時は { path } を返す。ffmpeg エラーは例外として伝播する。
 ipcMain.handle('audio:export', async () => {
