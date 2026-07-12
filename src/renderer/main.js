@@ -16,6 +16,12 @@ const deleteRegionBtn = document.getElementById('delete-region-btn')
 const clearRegionsBtn = document.getElementById('clear-regions-btn')
 const cutBtn = document.getElementById('cut-btn')
 const saveBtn = document.getElementById('save-btn')
+const volumeInput = document.getElementById('volume-input')
+const volumeApplyBtn = document.getElementById('volume-apply-btn')
+const volumeDownBtn = document.getElementById('volume-down-btn')
+const volumeUpBtn = document.getElementById('volume-up-btn')
+const volumeDoubleBtn = document.getElementById('volume-double-btn')
+const volumeMuteBtn = document.getElementById('volume-mute-btn')
 
 const REGION_COLOR = 'rgba(91, 141, 239, 0.22)'
 const REGION_COLOR_SELECTED = 'rgba(255, 176, 60, 0.42)'
@@ -25,7 +31,7 @@ let regionsPlugin = null
 let selectedRegion = null
 let loadToken = 0 // 音声の読み込み/カットごとにインクリメントし、キャッシュを回避する
 let busy = false // カット処理中などの多重操作を防ぐ
-let canSave = false // カット等の編集結果（中間ファイル）が存在するか＝保存可能か
+let canSave = false // 編集操作（カット/音量調整）が行われ、保存可能な中間ファイルが存在するか
 
 // 秒を m:ss.d 形式に整形
 function formatTime(seconds) {
@@ -56,8 +62,16 @@ function updateEditControls() {
   deleteRegionBtn.disabled = busy || !selectedRegion
   clearRegionsBtn.disabled = busy || count === 0
   cutBtn.disabled = busy || count === 0
-  // 保存は編集結果（カット後の中間ファイル）が存在するときのみ有効
+  // 保存は編集操作（カット/音量調整）が行われたときのみ有効
   saveBtn.disabled = busy || !canSave
+  // 音量調整は音声が読み込まれていて処理中でないときに有効
+  const volumeReady = !busy && !!wavesurfer
+  volumeInput.disabled = !volumeReady
+  volumeApplyBtn.disabled = !volumeReady
+  volumeDownBtn.disabled = !volumeReady
+  volumeUpBtn.disabled = !volumeReady
+  volumeDoubleBtn.disabled = !volumeReady
+  volumeMuteBtn.disabled = !volumeReady
 }
 
 function selectRegion(region) {
@@ -216,6 +230,62 @@ async function doCut() {
   }
 }
 
+// 音量を調整する。範囲が選択されていればその範囲のみ、なければ全体に適用する。
+// presetPercent を渡すとその値を使い、未指定なら数値入力の値を使う。
+async function doVolume(presetPercent) {
+  if (busy || !wavesurfer) return
+
+  let percent
+  if (presetPercent === undefined) {
+    percent = Number(volumeInput.value)
+  } else {
+    percent = presetPercent
+    volumeInput.value = String(presetPercent) // プリセットを入力欄にも反映
+  }
+  if (!Number.isFinite(percent) || percent < 0) {
+    statusEl.textContent = '音量の値が不正です（0 以上の数値を入力してください）'
+    return
+  }
+
+  // 範囲が選択されていればその範囲のみ、なければ全体（null）に適用
+  const region = selectedRegion
+    ? { start: selectedRegion.start, end: selectedRegion.end }
+    : null
+  const factor = percent / 100
+
+  const token = ++loadToken
+  busy = true
+  openFileBtn.disabled = true
+  statusEl.textContent = '音量調整中…'
+  updateEditControls()
+
+  try {
+    // メインプロセスで ffmpeg によりディスク上で音量調整（メモリに全展開しない）
+    const { peaks, duration } = await window.api.adjustVolume(factor, region)
+    if (token !== loadToken) return
+
+    await renderWaveform(peaks, duration, token)
+    if (token !== loadToken) return
+
+    canSave = true // 音量調整の結果（中間ファイル）ができたので保存可能
+    setTransportState('stopped')
+    clearSelection()
+    updateTime()
+    const scope = region ? '選択範囲' : '全体'
+    statusEl.textContent = `音量調整完了（${percent}% / ${scope}）`
+  } catch (err) {
+    if (token === loadToken) {
+      statusEl.textContent = `音量調整に失敗しました: ${err.message}`
+    }
+  } finally {
+    if (token === loadToken) {
+      busy = false
+      openFileBtn.disabled = false
+      updateEditControls()
+    }
+  }
+}
+
 // 現在の編集結果を、選んだフォーマットでディスクへ書き出す
 async function doSave() {
   if (busy || !canSave) return
@@ -270,6 +340,13 @@ clearRegionsBtn.addEventListener('click', () => {
 
 cutBtn.addEventListener('click', doCut)
 saveBtn.addEventListener('click', doSave)
+
+// 音量調整：入力値で適用 ＋ よく使う倍率のプリセット
+volumeApplyBtn.addEventListener('click', () => doVolume())
+volumeDownBtn.addEventListener('click', () => doVolume(50)) // 半分
+volumeUpBtn.addEventListener('click', () => doVolume(150)) // 1.5倍
+volumeDoubleBtn.addEventListener('click', () => doVolume(200)) // 2倍
+volumeMuteBtn.addEventListener('click', () => doVolume(0)) // ミュート
 
 // Delete / Backspace キーで選択中の範囲を削除
 document.addEventListener('keydown', (e) => {

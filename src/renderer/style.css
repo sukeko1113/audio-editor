@@ -135,6 +135,33 @@ body {
   margin-right: 4px;
 }
 
+.volume-label,
+.volume-unit,
+.volume-presets-label {
+  font-size: 13px;
+  color: #b6b6c2;
+}
+
+.volume-presets-label {
+  margin-left: 6px;
+  color: #9a9aa6;
+}
+
+.volume-input {
+  width: 76px;
+  padding: 6px 8px;
+  font-size: 14px;
+  color: #e8e8ec;
+  background: #16161b;
+  border: 1px solid #43434f;
+  border-radius: 6px;
+  font-variant-numeric: tabular-nums;
+}
+
+.volume-input:disabled {
+  opacity: 0.4;
+}
+
 .btn-danger {
   color: #fff;
   background: #d64545;

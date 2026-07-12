@@ -38,6 +38,30 @@
             <button id="cut-btn" class="btn btn-danger" disabled>カット</button>
             <button id="save-btn" class="btn btn-primary" disabled>保存</button>
           </div>
+
+          <p class="edit-hint">
+            音量調整：範囲が選択されていればその範囲のみ、なければ音声全体に適用します。
+          </p>
+          <div class="edit-actions volume-actions">
+            <span class="volume-label">音量</span>
+            <input
+              id="volume-input"
+              class="volume-input"
+              type="number"
+              min="0"
+              max="1000"
+              step="10"
+              value="100"
+              disabled
+            />
+            <span class="volume-unit">%</span>
+            <button id="volume-apply-btn" class="btn" disabled>音量を適用</button>
+            <span class="volume-presets-label">プリセット:</span>
+            <button id="volume-down-btn" class="btn" disabled>-50%</button>
+            <button id="volume-up-btn" class="btn" disabled>+50%</button>
+            <button id="volume-double-btn" class="btn" disabled>2倍</button>
+            <button id="volume-mute-btn" class="btn" disabled>ミュート</button>
+          </div>
         </section>
 
         <p id="placeholder" class="placeholder">

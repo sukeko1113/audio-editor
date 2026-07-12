@@ -13,6 +13,10 @@ contextBridge.exposeInMainWorld('api', {
   // 返り値: カット後の { peaks: number[], duration: number }
   cutRegions: (regions) => ipcRenderer.invoke('audio:cut', regions),
 
+  // 音量を調整する。region=null なら全体、{start,end} 指定時はその範囲のみ。
+  // 返り値: 調整後の { peaks: number[], duration: number }
+  adjustVolume: (factor, region) => ipcRenderer.invoke('audio:volume', { factor, region }),
+
   // 現在の編集結果を、保存ダイアログで選んだフォーマット/パスへ書き出す
   // 返り値: 保存成功時 { path }、キャンセル時 null（失敗時は例外）
   exportAudio: () => ipcRenderer.invoke('audio:export')
