@@ -22,6 +22,8 @@ const volumeDownBtn = document.getElementById('volume-down-btn')
 const volumeUpBtn = document.getElementById('volume-up-btn')
 const volumeDoubleBtn = document.getElementById('volume-double-btn')
 const volumeMuteBtn = document.getElementById('volume-mute-btn')
+const undoBtn = document.getElementById('undo-btn')
+const redoBtn = document.getElementById('redo-btn')
 
 const REGION_COLOR = 'rgba(91, 141, 239, 0.22)'
 const REGION_COLOR_SELECTED = 'rgba(255, 176, 60, 0.42)'
@@ -32,6 +34,8 @@ let selectedRegion = null
 let loadToken = 0 // 音声の読み込み/カットごとにインクリメントし、キャッシュを回避する
 let busy = false // カット処理中などの多重操作を防ぐ
 let canSave = false // 編集操作（カット/音量調整）が行われ、保存可能な中間ファイルが存在するか
+let canUndo = false // 1つ前の版に戻せるか
+let canRedo = false // 1つ先の版に進めるか
 
 // 秒を m:ss.d 形式に整形
 function formatTime(seconds) {
@@ -72,6 +76,18 @@ function updateEditControls() {
   volumeUpBtn.disabled = !volumeReady
   volumeDoubleBtn.disabled = !volumeReady
   volumeMuteBtn.disabled = !volumeReady
+  // アンドゥ/リドゥは戻せる/進める版があるときのみ有効
+  undoBtn.disabled = busy || !canUndo
+  redoBtn.disabled = busy || !canRedo
+}
+
+// main から返る履歴/保存の状態（canUndo / canRedo / hasEdits）を反映する。
+// load / cut / volume / undo / redo の各処理後に共通で呼ぶ。
+function applyHistoryState(state) {
+  canSave = !!state.hasEdits
+  canUndo = !!state.canUndo
+  canRedo = !!state.canRedo
+  updateEditControls()
 }
 
 function selectRegion(region) {
@@ -166,14 +182,15 @@ async function openAndLoad() {
 
   try {
     // メインプロセスで ffmpeg により軽量なピークデータを生成（長尺でもメモリ安全）
-    const { peaks, duration } = await window.api.loadAudio(filePath)
+    const state = await window.api.loadAudio(filePath)
     if (token !== loadToken) return
 
-    await renderWaveform(peaks, duration, token)
+    await renderWaveform(state.peaks, state.duration, token)
     if (token !== loadToken) return
 
     transportEl.hidden = false
     editToolsEl.hidden = false
+    applyHistoryState(state) // 読み込み直後は未編集（undo/redo/save すべて無効）
     setTransportState('stopped')
     clearSelection()
     updateTime()
@@ -206,17 +223,17 @@ async function doCut() {
 
   try {
     // メインプロセスで ffmpeg によりディスク上でカット（メモリに全展開しない）
-    const { peaks, duration } = await window.api.cutRegions(regions)
+    const state = await window.api.cutRegions(regions)
     if (token !== loadToken) return
 
-    await renderWaveform(peaks, duration, token)
+    await renderWaveform(state.peaks, state.duration, token)
     if (token !== loadToken) return
 
-    canSave = true // カット結果（中間ファイル）ができたので保存可能
+    applyHistoryState(state) // カット結果ができたので保存可能・アンドゥ可能
     setTransportState('stopped')
     clearSelection()
     updateTime()
-    statusEl.textContent = `カット完了（長さ: ${formatTime(duration)}）`
+    statusEl.textContent = `カット完了（長さ: ${formatTime(state.duration)}）`
   } catch (err) {
     if (token === loadToken) {
       statusEl.textContent = `カットに失敗しました: ${err.message}`
@@ -261,13 +278,13 @@ async function doVolume(presetPercent) {
 
   try {
     // メインプロセスで ffmpeg によりディスク上で音量調整（メモリに全展開しない）
-    const { peaks, duration } = await window.api.adjustVolume(factor, region)
+    const state = await window.api.adjustVolume(factor, region)
     if (token !== loadToken) return
 
-    await renderWaveform(peaks, duration, token)
+    await renderWaveform(state.peaks, state.duration, token)
     if (token !== loadToken) return
 
-    canSave = true // 音量調整の結果（中間ファイル）ができたので保存可能
+    applyHistoryState(state) // 音量調整の結果ができたので保存可能・アンドゥ可能
     setTransportState('stopped')
     clearSelection()
     updateTime()
@@ -276,6 +293,52 @@ async function doVolume(presetPercent) {
   } catch (err) {
     if (token === loadToken) {
       statusEl.textContent = `音量調整に失敗しました: ${err.message}`
+    }
+  } finally {
+    if (token === loadToken) {
+      busy = false
+      openFileBtn.disabled = false
+      updateEditControls()
+    }
+  }
+}
+
+// アンドゥ／リドゥ共通処理。版を切り替え、その版の状態に波形を再描画する。
+// ffmpeg の再処理は行わず、各版が保持する中間ファイル（peaks/duration）を使う。
+async function navigateHistory(direction) {
+  // direction: 'undo' | 'redo'
+  if (busy) return
+  if (direction === 'undo' && !canUndo) return
+  if (direction === 'redo' && !canRedo) return
+
+  const token = ++loadToken
+  busy = true
+  openFileBtn.disabled = true
+  statusEl.textContent = direction === 'undo' ? '元に戻しています…' : 'やり直しています…'
+  updateEditControls()
+
+  try {
+    const state = direction === 'undo' ? await window.api.undo() : await window.api.redo()
+    if (token !== loadToken) return
+
+    await renderWaveform(state.peaks, state.duration, token)
+    if (token !== loadToken) return
+
+    applyHistoryState(state)
+    setTransportState('stopped')
+    clearSelection()
+    updateTime()
+    if (direction === 'undo') {
+      statusEl.textContent = state.hasEdits
+        ? `元に戻しました（長さ: ${formatTime(state.duration)}）`
+        : '最初の状態に戻しました'
+    } else {
+      statusEl.textContent = `やり直しました（長さ: ${formatTime(state.duration)}）`
+    }
+  } catch (err) {
+    if (token === loadToken) {
+      const label = direction === 'undo' ? '元に戻せませんでした' : 'やり直せませんでした'
+      statusEl.textContent = `${label}: ${err.message}`
     }
   } finally {
     if (token === loadToken) {
@@ -341,6 +404,9 @@ clearRegionsBtn.addEventListener('click', () => {
 cutBtn.addEventListener('click', doCut)
 saveBtn.addEventListener('click', doSave)
 
+undoBtn.addEventListener('click', () => navigateHistory('undo'))
+redoBtn.addEventListener('click', () => navigateHistory('redo'))
+
 // 音量調整：入力値で適用 ＋ よく使う倍率のプリセット
 volumeApplyBtn.addEventListener('click', () => doVolume())
 volumeDownBtn.addEventListener('click', () => doVolume(50)) // 半分
@@ -348,8 +414,32 @@ volumeUpBtn.addEventListener('click', () => doVolume(150)) // 1.5倍
 volumeDoubleBtn.addEventListener('click', () => doVolume(200)) // 2倍
 volumeMuteBtn.addEventListener('click', () => doVolume(0)) // ミュート
 
-// Delete / Backspace キーで選択中の範囲を削除
+// 数値入力欄など編集可能な要素にフォーカスがあるか（ショートカット誤作動の防止用）
+function isTypingInField() {
+  const el = document.activeElement
+  return !!el && (el.tagName === 'INPUT' || el.tagName === 'TEXTAREA' || el.isContentEditable)
+}
+
 document.addEventListener('keydown', (e) => {
+  // 入力欄にフォーカスがある間は、キー操作を欄の編集（数値入力・IME 等）に委ねる
+  if (isTypingInField()) return
+
+  // Ctrl+Z でアンドゥ、Ctrl+Y でリドゥ（Cmd も許容）
+  if ((e.ctrlKey || e.metaKey) && !e.altKey) {
+    const key = e.key.toLowerCase()
+    if (key === 'z' && !e.shiftKey) {
+      e.preventDefault()
+      navigateHistory('undo')
+      return
+    }
+    if (key === 'y') {
+      e.preventDefault()
+      navigateHistory('redo')
+      return
+    }
+  }
+
+  // Delete / Backspace キーで選択中の範囲を削除
   if ((e.key === 'Delete' || e.key === 'Backspace') && selectedRegion && !busy) {
     e.preventDefault()
     selectedRegion.remove()

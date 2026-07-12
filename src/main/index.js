@@ -131,6 +131,16 @@ ipcMain.handle('audio:cut', async (_event, regions) => {
   return session.cut(regions)
 })
 
+// アンドゥ：1つ前の版へ戻し、その版の状態（波形・長さ・履歴/保存フラグ）を返す。
+ipcMain.handle('audio:undo', async () => {
+  return session.undo()
+})
+
+// リドゥ：1つ先の版へ進め、その版の状態を返す。
+ipcMain.handle('audio:redo', async () => {
+  return session.redo()
+})
+
 // 音量を調整し、新しい版の波形ピーク・長さを返す。
 // region が null なら全体、{start,end} 指定時はその範囲のみに適用する。
 ipcMain.handle('audio:volume', async (_event, { factor, region }) => {

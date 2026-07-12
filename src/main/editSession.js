@@ -88,6 +88,41 @@ export class EditSession {
     return cur ? cur.path : null
   }
 
+  // これ以上戻せる版があるか（最初の版より前には戻れない）
+  canUndo() {
+    return this.index > 0
+  }
+
+  // これ以上進める版があるか（末尾より先には進めない）
+  canRedo() {
+    return this.index < this.versions.length - 1
+  }
+
+  // 現在の版の波形・長さと、履歴/保存の状態をまとめて返す。
+  // load / cut / applyVolume / undo / redo の共通の返り値に使う。
+  state() {
+    const cur = this.current()
+    return {
+      peaks: cur ? cur.peaks : [],
+      duration: cur ? cur.duration : 0,
+      canUndo: this.canUndo(),
+      canRedo: this.canRedo(),
+      hasEdits: this.hasEdits()
+    }
+  }
+
+  // 1つ前の版へ戻す。ffmpeg 再処理は不要で、各版が保持する中間ファイルを切り替えるだけ。
+  undo() {
+    if (this.canUndo()) this.index -= 1
+    return this.state()
+  }
+
+  // 1つ先の版へ進める（アンドゥで戻った版がある場合）。
+  redo() {
+    if (this.canRedo()) this.index += 1
+    return this.state()
+  }
+
   ensureTempDir() {
     if (!this.tempDir) {
       this.tempDir = mkdtempSync(join(tmpdir(), 'audio-editor-'))
@@ -123,7 +158,7 @@ export class EditSession {
     const { peaks, duration } = await generatePeaks(filePath)
     this.versions = [{ path: filePath, duration, peaks, isTemp: false, op: null }]
     this.index = 0
-    return { peaks, duration }
+    return this.state()
   }
 
   /**
@@ -161,7 +196,7 @@ export class EditSession {
     })
     this.index = this.versions.length - 1
 
-    return { peaks, duration }
+    return this.state()
   }
 
   /**
@@ -195,7 +230,7 @@ export class EditSession {
     })
     this.index = this.versions.length - 1
 
-    return { peaks, duration }
+    return this.state()
   }
 
   // ffmpeg の volume フィルタで音量を調整する。カット処理と同じくディスク上を
