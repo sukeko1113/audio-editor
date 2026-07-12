@@ -106,6 +106,39 @@ body {
   color: #b6b6c2;
 }
 
+.zoom-controls {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  margin-left: 20px;
+}
+
+.zoom-label {
+  font-size: 13px;
+  color: #b6b6c2;
+}
+
+.zoom-btn {
+  padding: 7px 12px;
+  font-weight: 600;
+}
+
+.zoom-slider {
+  width: 160px;
+  accent-color: #3b82f6;
+}
+
+.zoom-slider:disabled {
+  opacity: 0.4;
+}
+
+.zoom-value {
+  min-width: 48px;
+  font-size: 13px;
+  font-variant-numeric: tabular-nums;
+  color: #b6b6c2;
+}
+
 .edit-tools {
   display: flex;
   flex-direction: column;
