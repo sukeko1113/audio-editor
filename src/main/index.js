@@ -1,5 +1,5 @@
 import { app, BrowserWindow, ipcMain, dialog, protocol } from 'electron'
-import { join, extname } from 'path'
+import { join, extname, basename } from 'path'
 import { createReadStream, statSync } from 'fs'
 import { Readable } from 'stream'
 import { EditSession } from './editSession.js'
@@ -129,6 +129,44 @@ ipcMain.handle('audio:load', async (_event, filePath) => {
 // 選択範囲（複数可）をまとめてカットし、新しい版の波形ピーク・長さを返す。
 ipcMain.handle('audio:cut', async (_event, regions) => {
   return session.cut(regions)
+})
+
+// 現在の編集結果を、保存ダイアログで選んだフォーマット/パスへ書き出す。
+// キャンセル時は null、成功時は { path } を返す。ffmpeg エラーは例外として伝播する。
+ipcMain.handle('audio:export', async () => {
+  if (!session.currentPath()) {
+    throw new Error('音声が読み込まれていません')
+  }
+
+  const ext = session.originalExtension()
+  // デフォルトのファイル名：元ファイル名 + "-edited" + 元の拡張子
+  const originalPath = session.originalPath || ''
+  const base = basename(originalPath, extname(originalPath)) || 'audio'
+  const defaultPath = `${base}-edited.${ext}`
+
+  // 元ファイルと同じ形式をデフォルト（先頭）に並べる
+  const allFilters = [
+    { name: 'MP3', extensions: ['mp3'] },
+    { name: 'WAV', extensions: ['wav'] },
+    { name: 'M4A', extensions: ['m4a'] }
+  ]
+  const filters = [
+    ...allFilters.filter((f) => f.extensions[0] === ext),
+    ...allFilters.filter((f) => f.extensions[0] !== ext)
+  ]
+
+  const result = await dialog.showSaveDialog({
+    title: '編集した音声を保存',
+    defaultPath,
+    filters
+  })
+
+  if (result.canceled || !result.filePath) {
+    return null
+  }
+
+  const outPath = await session.export(result.filePath)
+  return { path: outPath }
 })
 
 app.whenReady().then(() => {

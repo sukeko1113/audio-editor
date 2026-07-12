@@ -1,5 +1,5 @@
 import { spawn } from 'child_process'
-import { join } from 'path'
+import { join, extname } from 'path'
 import { mkdtempSync, rmSync } from 'fs'
 import { tmpdir } from 'os'
 import ffmpegStatic from 'ffmpeg-static'
@@ -27,6 +27,21 @@ function mergeIntervals(intervals, duration) {
     }
   }
   return merged
+}
+
+// 出力パスの拡張子から ffmpeg の音声コーデック引数を決定する。
+//   wav → pcm_s16le（16bit PCM） / mp3 → libmp3lame（192kbps） / m4a → aac（192kbps）
+function codecArgsFor(outPath) {
+  switch (extname(outPath).toLowerCase()) {
+    case '.wav':
+      return ['-c:a', 'pcm_s16le']
+    case '.mp3':
+      return ['-c:a', 'libmp3lame', '-b:a', '192k']
+    case '.m4a':
+      return ['-c:a', 'aac', '-b:a', '192k']
+    default:
+      throw new Error(`対応していない出力形式です: ${extname(outPath) || '(拡張子なし)'}`)
+  }
 }
 
 // 削除範囲の補集合（＝残す範囲）を求める
@@ -147,6 +162,57 @@ export class EditSession {
     this.index = this.versions.length - 1
 
     return { peaks, duration }
+  }
+
+  // カット等の編集が1回でも行われているか（＝カット後の中間ファイルが存在するか）
+  hasEdits() {
+    const cur = this.current()
+    return !!(cur && cur.isTemp)
+  }
+
+  // 元の読み込みファイルの拡張子（デフォルトの保存形式に使う）を返す
+  originalExtension() {
+    return extname(this.originalPath || '').replace('.', '').toLowerCase() || 'mp3'
+  }
+
+  /**
+   * 現在の編集結果を指定パスへ書き出す。
+   * 入力は現在の版のファイル（カット済みなら中間ファイル、未編集なら元ファイル）。
+   * 出力コーデックは outPath の拡張子から決まる。元ファイルは変更しない。
+   */
+  async export(outPath) {
+    const cur = this.current()
+    if (!cur) throw new Error('音声が読み込まれていません')
+    await this.runFfmpegExport(cur.path, outPath)
+    return outPath
+  }
+
+  // ffmpeg で入力ファイルを指定フォーマットへ変換して書き出す。
+  // カット処理と同様、ディスク上のファイルをストリーム処理する。
+  runFfmpegExport(inputPath, outPath) {
+    return new Promise((resolve, reject) => {
+      const args = [
+        '-v', 'error',
+        '-nostdin',
+        '-i', inputPath,
+        '-map', '0:a',
+        ...codecArgsFor(outPath),
+        '-y',
+        outPath
+      ]
+
+      const proc = spawn(ffmpegPath, args)
+      let err = ''
+      proc.stderr.on('data', (d) => { err += d.toString() })
+      proc.on('error', reject)
+      proc.on('close', (code) => {
+        if (code !== 0) {
+          reject(new Error(`ffmpeg export failed (code ${code}): ${err.trim()}`))
+          return
+        }
+        resolve()
+      })
+    })
   }
 
   // 現在位置より後ろ（redo 対象）の版と、その一時ファイルを破棄する
