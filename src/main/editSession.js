@@ -7,7 +7,8 @@ import { generatePeaks } from './peaks.js'
 
 const ffmpegPath = (ffmpegStatic || '').replace('app.asar', 'app.asar.unpacked')
 
-// 削除範囲どうしを正規化（0以上にクランプ・ソート・重なり/隣接をマージ）する
+// 編集対象の範囲どうしを正規化（0〜duration にクランプ・ソート・重なり/隣接をマージ）する。
+// カット・音量調整で共用する。
 function mergeIntervals(intervals, duration) {
   const sorted = intervals
     .map((r) => ({
@@ -202,19 +203,27 @@ export class EditSession {
   /**
    * 音量を調整して新しい版を積む。カット処理と完全に同じフロー
    * （ffmpeg でディスク上のファイルを処理 → 中間ファイル生成 → 波形取得）。
-   * region が指定されればその範囲のみ、null なら全体に適用する。元ファイルは変更しない。
+   * regions（複数可）が指定されればそれらの範囲のみ、空/null なら全体に適用する。
+   * 元ファイルは変更しない。
    * @param {number} factor 倍率（1=変更なし, 0.5=半分, 2=2倍, 0=ミュート）
-   * @param {{start:number,end:number}|null} region
+   * @param {Array<{start:number,end:number}>|null} regions
    */
-  async applyVolume(factor, region) {
+  async applyVolume(factor, regions) {
     const cur = this.current()
     if (!cur) throw new Error('音声が読み込まれていません')
     if (!Number.isFinite(factor) || factor < 0) {
       throw new Error('音量の倍率が不正です')
     }
 
+    // カットと同様に正規化（duration へのクランプ・ソート・重なり/隣接のマージ）
+    const hasRegions = Array.isArray(regions) && regions.length > 0
+    const normalized = hasRegions ? mergeIntervals(regions, cur.duration) : []
+    if (hasRegions && normalized.length === 0) {
+      throw new Error('音量を調整する範囲が不正です')
+    }
+
     const outPath = this.nextTempPath('flac')
-    await this.runFfmpegVolume(cur.path, factor, region, cur.duration, outPath)
+    await this.runFfmpegVolume(cur.path, factor, normalized, outPath)
 
     // 調整後の実際の長さ・波形を新しいファイルから取得
     const { peaks, duration } = await generatePeaks(outPath)
@@ -226,7 +235,7 @@ export class EditSession {
       duration,
       peaks,
       isTemp: true,
-      op: { type: 'volume', factor, region: region || null }
+      op: { type: 'volume', factor, regions: normalized }
     })
     this.index = this.versions.length - 1
 
@@ -235,15 +244,17 @@ export class EditSession {
 
   // ffmpeg の volume フィルタで音量を調整する。カット処理と同じくディスク上を
   // ストリーム処理し、可逆の FLAC で中間ファイルを出力する。
-  // region 指定時は enable='between(t,start,end)' で対象範囲を限定する。
-  runFfmpegVolume(inputPath, factor, region, duration, outPath) {
+  // regions 指定時は各範囲の between(t,start,end) を +（論理和）で連結した
+  // enable 式で対象範囲を限定する。空配列なら全体に適用する。
+  runFfmpegVolume(inputPath, factor, regions, outPath) {
     return new Promise((resolve, reject) => {
       const fmt = (n) => n.toFixed(6)
       let filter
-      if (region) {
-        const start = Math.max(0, Math.min(region.start, duration))
-        const end = Math.max(start, Math.min(region.end, duration))
-        filter = `volume=${fmt(factor)}:enable='between(t,${fmt(start)},${fmt(end)})'`
+      if (regions.length > 0) {
+        const enable = regions
+          .map((r) => `between(t,${fmt(r.start)},${fmt(r.end)})`)
+          .join('+')
+        filter = `volume=${fmt(factor)}:enable='${enable}'`
       } else {
         filter = `volume=${fmt(factor)}`
       }

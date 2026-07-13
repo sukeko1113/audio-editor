@@ -142,9 +142,9 @@ ipcMain.handle('audio:redo', async () => {
 })
 
 // 音量を調整し、新しい版の波形ピーク・長さを返す。
-// region が null なら全体、{start,end} 指定時はその範囲のみに適用する。
-ipcMain.handle('audio:volume', async (_event, { factor, region }) => {
-  return session.applyVolume(factor, region)
+// regions が空/null なら全体、{start,end} の配列指定時はそれらの範囲のみに適用する。
+ipcMain.handle('audio:volume', async (_event, { factor, regions }) => {
+  return session.applyVolume(factor, regions)
 })
 
 // 現在の編集結果を、保存ダイアログで選んだフォーマット/パスへ書き出す。
