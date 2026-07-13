@@ -2,10 +2,9 @@ import { spawn } from 'child_process'
 import { join, extname } from 'path'
 import { mkdtempSync, rmSync } from 'fs'
 import { tmpdir } from 'os'
-import ffmpegStatic from 'ffmpeg-static'
+// 開発/パッケージ後の両対応のパス解決は binaries.js に集約
+import { ffmpegPath } from './binaries.js'
 import { generatePeaks } from './peaks.js'
-
-const ffmpegPath = (ffmpegStatic || '').replace('app.asar', 'app.asar.unpacked')
 
 // 削除範囲どうしを正規化（0以上にクランプ・ソート・重なり/隣接をマージ）する
 function mergeIntervals(intervals, duration) {

@@ -1,11 +1,6 @@
 import { spawn } from 'child_process'
-import ffmpegStatic from 'ffmpeg-static'
-import ffprobeStatic from 'ffprobe-static'
-
-// パッケージ化(asar)された場合、バイナリは asar 外(unpacked)に展開されるため
-// パスを付け替える。開発時は置換対象が無いのでそのまま。
-const ffmpegPath = (ffmpegStatic || '').replace('app.asar', 'app.asar.unpacked')
-const ffprobePath = (ffprobeStatic.path || '').replace('app.asar', 'app.asar.unpacked')
+// 開発/パッケージ後の両対応のパス解決は binaries.js に集約
+import { ffmpegPath, ffprobePath } from './binaries.js'
 
 // 波形描画用に生成するピークの本数（画面幅に対して十分な解像度）。
 // ファイルの長さに関わらず固定なので、3時間の音声でもピーク配列のサイズは一定。

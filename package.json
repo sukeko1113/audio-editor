@@ -3,13 +3,49 @@
   "version": "0.1.0",
   "description": "波形を見ながら音声をカット・音量調整して書き出すデスクトップ音声編集アプリ（Windows 向け）",
   "main": "out/main/index.js",
-  "author": "",
+  "author": "sukeko",
   "license": "MIT",
   "scripts": {
     "dev": "electron-vite dev",
     "start": "electron-vite preview",
     "build": "electron-vite build",
     "build:win": "electron-vite build && electron-builder --win"
+  },
+  "build": {
+    "appId": "com.sukeko.audioeditor",
+    "productName": "AudioEditor",
+    "directories": {
+      "output": "release",
+      "buildResources": "build"
+    },
+    "files": [
+      "out/**/*",
+      "package.json",
+      "!node_modules/ffprobe-static/bin/darwin/**",
+      "!node_modules/ffprobe-static/bin/linux/**",
+      "!node_modules/ffprobe-static/bin/win32/ia32/**"
+    ],
+    "asarUnpack": [
+      "node_modules/ffmpeg-static/**",
+      "node_modules/ffprobe-static/**"
+    ],
+    "win": {
+      "target": [
+        {
+          "target": "nsis",
+          "arch": [
+            "x64"
+          ]
+        }
+      ]
+    },
+    "nsis": {
+      "oneClick": false,
+      "allowToChangeInstallationDirectory": true,
+      "createDesktopShortcut": true,
+      "createStartMenuShortcut": true,
+      "artifactName": "${productName}-${version}-setup.${ext}"
+    }
   },
   "devDependencies": {
     "electron": "^31.0.0",

@@ -104,17 +104,18 @@ npm run dev
 | `npm run dev` | 開発モードでアプリを起動（ホットリロード対応） |
 | `npm run build` | レンダラー・メイン・プリロードをビルド（`out/` へ出力） |
 | `npm start` | ビルド済みのアプリをプレビュー起動 |
-| `npm run build:win` | Windows 用インストーラー（NSIS `.exe`）を `dist/` に生成 |
+| `npm run build:win` | Windows 用インストーラー（NSIS `.exe`）を `release/` に生成 |
 
 ## プロジェクト構成
 
 ```
 audio-editor/
 ├── electron.vite.config.js   # electron-vite の設定
-├── electron-builder.yml      # Windows インストーラーの設定
+├── package.json              # 依存関係・electron-builder（build セクション）の設定
 ├── src/
 │   ├── main/                 # メインプロセス
 │   │   ├── index.js          #   ウィンドウ生成・ファイルダイアログ・音声ストリーム配信・IPC
+│   │   ├── binaries.js       #   ffmpeg / ffprobe バイナリのパス解決（開発時 / パッケージ後）
 │   │   ├── peaks.js          #   ffmpeg による波形ピーク生成（メモリ安全なストリーム処理）
 │   │   └── editSession.js    #   版履歴の管理と ffmpeg によるカット処理
 │   ├── preload/              # プリロード（レンダラーへ安全に API を公開）
