@@ -332,7 +332,8 @@ async function doCut() {
   }
 }
 
-// 音量を調整する。範囲が選択されていればその範囲のみ、なければ全体に適用する。
+// 音量を調整する。範囲が選択されていればそのすべての範囲に、なければ全体に適用する
+// （カットと同様に、選択中の全範囲をまとめて対象にする）。
 // presetPercent を渡すとその値を使い、未指定なら数値入力の値を使う。
 async function doVolume(presetPercent) {
   if (busy || !wavesurfer) return
@@ -349,10 +350,10 @@ async function doVolume(presetPercent) {
     return
   }
 
-  // 範囲が選択されていればその範囲のみ、なければ全体（null）に適用
-  const region = selectedRegion
-    ? { start: selectedRegion.start, end: selectedRegion.end }
-    : null
+  // カットと同じ集め方：選択中のすべての範囲を対象に、なければ全体（空配列）に適用
+  const regions = regionsPlugin
+    ? regionsPlugin.getRegions().map((r) => ({ start: r.start, end: r.end }))
+    : []
   const factor = percent / 100
 
   const token = ++loadToken
@@ -363,7 +364,7 @@ async function doVolume(presetPercent) {
 
   try {
     // メインプロセスで ffmpeg によりディスク上で音量調整（メモリに全展開しない）
-    const state = await window.api.adjustVolume(factor, region)
+    const state = await window.api.adjustVolume(factor, regions)
     if (token !== loadToken) return
 
     await renderWaveform(state.peaks, state.duration, token)
@@ -373,7 +374,12 @@ async function doVolume(presetPercent) {
     setTransportState('stopped')
     clearSelection()
     updateTime()
-    const scope = region ? '選択範囲' : '全体'
+    const scope =
+      regions.length === 0
+        ? '全体'
+        : regions.length === 1
+          ? '選択範囲'
+          : `選択範囲 ${regions.length}箇所`
     statusEl.textContent = `音量調整完了（${percent}% / ${scope}）`
   } catch (err) {
     if (token === loadToken) {

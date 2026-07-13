@@ -13,9 +13,9 @@ contextBridge.exposeInMainWorld('api', {
   // 返り値: カット後の { peaks: number[], duration: number }
   cutRegions: (regions) => ipcRenderer.invoke('audio:cut', regions),
 
-  // 音量を調整する。region=null なら全体、{start,end} 指定時はその範囲のみ。
+  // 音量を調整する。regions=空/null なら全体、[{start,end}, ...] 指定時はそれらの範囲のみ。
   // 返り値: 調整後の { peaks: number[], duration: number }
-  adjustVolume: (factor, region) => ipcRenderer.invoke('audio:volume', { factor, region }),
+  adjustVolume: (factor, regions) => ipcRenderer.invoke('audio:volume', { factor, regions }),
 
   // アンドゥ／リドゥ：版を1つ戻す／進める。
   // 返り値: { peaks, duration, canUndo, canRedo, hasEdits }
