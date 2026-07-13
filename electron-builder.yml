@@ -1,7 +1,7 @@
-appId: com.example.audioeditor
-productName: 音声編集アプリ
+appId: com.sukeko.audioeditor
+productName: AudioEditor
 directories:
-  output: dist
+  output: release
   buildResources: build
 files:
   - out/**/*
@@ -12,7 +12,11 @@ asarUnpack:
   - node_modules/ffprobe-static/**
 win:
   target:
-    - nsis
+    - target: nsis
+      arch:
+        - x64
 nsis:
   oneClick: false
   allowToChangeInstallationDirectory: true
+  createDesktopShortcut: true
+  createStartMenuShortcut: true
