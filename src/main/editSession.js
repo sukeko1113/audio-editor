@@ -2,10 +2,9 @@ import { spawn } from 'child_process'
 import { join, extname } from 'path'
 import { mkdtempSync, rmSync } from 'fs'
 import { tmpdir } from 'os'
-import ffmpegStatic from 'ffmpeg-static'
+import { ffmpegPath } from './binaries.js'
 import { generatePeaks } from './peaks.js'
-
-const ffmpegPath = (ffmpegStatic || '').replace('app.asar', 'app.asar.unpacked')
+import { probeAudioStream, needsNormalization, normalizeToPcmWav } from './normalize.js'
 
 // 編集対象の範囲どうしを正規化（0〜duration にクランプ・ソート・重なり/隣接をマージ）する。
 // カット・音量調整で共用する。
@@ -131,9 +130,9 @@ export class EditSession {
     return this.tempDir
   }
 
-  nextTempPath(ext) {
+  nextTempPath(ext, prefix = 'edit') {
     this.tempCounter += 1
-    return join(this.ensureTempDir(), `edit-${this.tempCounter}.${ext}`)
+    return join(this.ensureTempDir(), `${prefix}-${this.tempCounter}.${ext}`)
   }
 
   // これまでの一時ファイルを含めセッションを破棄する
@@ -152,12 +151,31 @@ export class EditSession {
     this.index = -1
   }
 
-  // 新しいファイルを読み込み、版履歴を初期化する
+  /**
+   * 新しいファイルを読み込み、版履歴を初期化する。
+   *
+   * ブラウザが再生できないコーデック（ADPCM WAV 等）の場合はここで
+   * 16bit PCM WAV の一時ファイルへ変換し、以降の版・再生・書き出しは
+   * すべてその正規化済みファイルを入力にする。元ファイルは変更しない。
+   * 一時ファイルはセッションの一時ディレクトリに置かれるため、
+   * 次の load / 終了時の reset() でまとめて破棄される。
+   */
   async load(filePath) {
     this.reset()
     this.originalPath = filePath
-    const { peaks, duration } = await generatePeaks(filePath)
-    this.versions = [{ path: filePath, duration, peaks, isTemp: false, op: null }]
+
+    let sourcePath = filePath
+    let isTemp = false
+    const info = await probeAudioStream(filePath)
+    if (needsNormalization(info)) {
+      const normalizedPath = this.nextTempPath('wav', 'source')
+      await normalizeToPcmWav(filePath, normalizedPath, info)
+      sourcePath = normalizedPath
+      isTemp = true
+    }
+
+    const { peaks, duration } = await generatePeaks(sourcePath)
+    this.versions = [{ path: sourcePath, duration, peaks, isTemp, op: null }]
     this.index = 0
     return this.state()
   }
@@ -283,10 +301,12 @@ export class EditSession {
     })
   }
 
-  // カット等の編集が1回でも行われているか（＝カット後の中間ファイルが存在するか）
+  // カット等の編集が1回でも行われているか（＝編集操作から生まれた版にいるか）。
+  // 読み込み時の正規化でも一時ファイルにはなるが、それは編集ではないので
+  // isTemp ではなく op の有無で判定する。
   hasEdits() {
     const cur = this.current()
-    return !!(cur && cur.isTemp)
+    return !!(cur && cur.op)
   }
 
   // 元の読み込みファイルの拡張子（デフォルトの保存形式に使う）を返す
