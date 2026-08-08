@@ -3,3 +3,10 @@ out/
 dist/
 *.log
 .DS_Store
+
+# 作業用の音声ファイルとビルド成果物
+*.WAV
+*.wav
+*.mp3
+*.m4a
+release/
