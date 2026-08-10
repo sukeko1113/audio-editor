@@ -3,7 +3,7 @@ import { join, extname } from 'path'
 import { mkdtempSync, rmSync } from 'fs'
 import { tmpdir } from 'os'
 import { ffmpegPath } from './binaries.js'
-import { generatePeaks } from './peaks.js'
+import { generatePeaks, probeDuration } from './peaks.js'
 import { probeAudioStream, needsNormalization, normalizeToPcmWav } from './normalize.js'
 import { convertToPcmWav, concatPcmWavs } from './concat.js'
 
@@ -47,6 +47,19 @@ function codecArgsFor(outPath) {
 
 // 末尾へ追加できる入力形式（読み込みと同じ MP3 / WAV / M4A）
 const APPENDABLE_EXTENSIONS = new Set(['.mp3', '.wav', '.m4a'])
+
+// 連結後の長さの上限（要件5.1 の「最長3時間程度」）。
+// これを超える連結は、時間のかかる変換を始める前に中断する。
+const MAX_APPEND_DURATION = 3 * 60 * 60
+
+// エラー表示用に秒を「2時間55分3秒」の形へ整形する
+function formatDurationJa(seconds) {
+  const total = Math.max(0, Math.round(seconds))
+  const h = Math.floor(total / 3600)
+  const m = Math.floor((total % 3600) / 60)
+  const s = total % 60
+  return h > 0 ? `${h}時間${m}分${s}秒` : `${m}分${s}秒`
+}
 
 // 現在の編集対象を、変換せずそのまま concat の入力にできるか。
 // 連結パラメータは現在の編集対象から取っているため、あとは中身が
@@ -323,6 +336,8 @@ export class EditSession {
    * 現在の編集対象も同じパラメータの 16bit PCM WAV でなければ変換してから連結する。
    * 変換に使う値（サンプルレート・チャンネル数）は現在の編集対象のものに揃える。
    *
+   * 連結後の長さが上限（要件5.1 の3時間）を超える場合は、変換を始める前に中断する。
+   *
    * @param {string} filePath 末尾に追加する音声ファイル（MP3 / WAV / M4A）
    */
   async append(filePath) {
@@ -338,6 +353,20 @@ export class EditSession {
 
     // 追加ファイルが音声として読めるかを、変換を始める前に確かめる
     await probeAudioStream(filePath)
+
+    // 連結後の長さが上限を超えないかも、同じく変換を始める前に確かめる。
+    // 判定は ffprobe が返す長さの単純な合計で、実際の連結結果とは
+    // 数十ミリ秒ずれうるが（MP3 のパディング等）、上限判定にはこの精度で足りる。
+    const addDuration = await probeDuration(filePath)
+    const totalDuration = cur.duration + addDuration
+    if (totalDuration > MAX_APPEND_DURATION) {
+      // ステータス表示は1行なので、内訳は記号でコンパクトに示す
+      throw new Error(
+        `連結後が上限の3時間を超えるため追加できません` +
+          `（${formatDurationJa(cur.duration)} ＋ ${formatDurationJa(addDuration)}` +
+          ` ＝ ${formatDurationJa(totalDuration)}）`
+      )
+    }
 
     // 連結の基準になるパラメータは現在の編集対象から取る
     const target = await probeAudioStream(cur.path)

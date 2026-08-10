@@ -55,6 +55,14 @@ const ZOOM_BUTTON_STEP = 10 // ＋/−ボタン1回ぶんのスライダー移�
 //   この上限なら描画・メモリ負荷は破綻しない）
 const ZOOM_MIN_VISIBLE_SECONDS = 5
 
+// main 側で投げた Error は IPC を通ると
+// 「Error invoking remote method 'audio:append': Error: 本文」の形に包まれる。
+// ステータス表示は1行しかないため、包み紙を外して本文だけを見せる。
+function errorText(err) {
+  const message = (err && err.message) || String(err)
+  return message.replace(/^Error invoking remote method '[^']*':\s*/, '').replace(/^Error:\s*/, '')
+}
+
 // 秒を m:ss.d 形式に整形
 function formatTime(seconds) {
   if (!Number.isFinite(seconds)) seconds = 0
@@ -287,7 +295,7 @@ async function openAndLoad() {
     if (token === loadToken) {
       statusEl.textContent = ''
       placeholderEl.hidden = false
-      placeholderEl.textContent = `読み込みに失敗しました: ${err.message}`
+      placeholderEl.textContent = `読み込みに失敗しました: ${errorText(err)}`
     }
   } finally {
     if (token === loadToken) {
@@ -326,7 +334,7 @@ async function doAppend() {
     statusEl.textContent = `ファイルを追加しました（長さ: ${formatTime(state.duration)}）`
   } catch (err) {
     if (token === loadToken) {
-      statusEl.textContent = `ファイルの追加に失敗しました: ${err.message}`
+      statusEl.textContent = `ファイルの追加に失敗しました: ${errorText(err)}`
     }
   } finally {
     if (token === loadToken) {
@@ -363,7 +371,7 @@ async function doCut() {
     statusEl.textContent = `カット完了（長さ: ${formatTime(state.duration)}）`
   } catch (err) {
     if (token === loadToken) {
-      statusEl.textContent = `カットに失敗しました: ${err.message}`
+      statusEl.textContent = `カットに失敗しました: ${errorText(err)}`
     }
   } finally {
     if (token === loadToken) {
@@ -425,7 +433,7 @@ async function doVolume(presetPercent) {
     statusEl.textContent = `音量調整完了（${percent}% / ${scope}）`
   } catch (err) {
     if (token === loadToken) {
-      statusEl.textContent = `音量調整に失敗しました: ${err.message}`
+      statusEl.textContent = `音量調整に失敗しました: ${errorText(err)}`
     }
   } finally {
     if (token === loadToken) {
@@ -471,7 +479,7 @@ async function navigateHistory(direction) {
   } catch (err) {
     if (token === loadToken) {
       const label = direction === 'undo' ? '元に戻せませんでした' : 'やり直せませんでした'
-      statusEl.textContent = `${label}: ${err.message}`
+      statusEl.textContent = `${label}: ${errorText(err)}`
     }
   } finally {
     if (token === loadToken) {
@@ -501,7 +509,7 @@ async function doSave() {
       statusEl.textContent = prevStatus
     }
   } catch (err) {
-    statusEl.textContent = `保存に失敗しました: ${err.message}`
+    statusEl.textContent = `保存に失敗しました: ${errorText(err)}`
   } finally {
     busy = false
     openFileBtn.disabled = false

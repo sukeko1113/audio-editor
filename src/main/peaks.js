@@ -12,8 +12,9 @@ const PEAK_SAMPLE_RATE = 8000
 
 /**
  * ffprobe で音声の長さ(秒)を取得する。メタデータのみ読むため軽量。
+ * 波形生成のほか、連結前の長さチェック（editSession）でも使う。
  */
-function probeDuration(filePath) {
+export function probeDuration(filePath) {
   return new Promise((resolve, reject) => {
     const args = [
       '-v', 'error',
