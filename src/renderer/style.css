@@ -28,6 +28,11 @@ body {
   border-bottom: 1px solid #35353f;
 }
 
+/* ツールバーのボタンは、長いステータス表示に押し潰されないようにする */
+.toolbar .btn {
+  flex-shrink: 0;
+}
+
 .status {
   font-size: 13px;
   color: #9a9aa6;

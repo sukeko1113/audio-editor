@@ -2,6 +2,7 @@ import WaveSurfer from 'wavesurfer.js'
 import RegionsPlugin from 'wavesurfer.js/dist/plugins/regions.esm.js'
 
 const openFileBtn = document.getElementById('open-file-btn')
+const appendFileBtn = document.getElementById('append-file-btn')
 const statusEl = document.getElementById('status')
 const placeholderEl = document.getElementById('placeholder')
 const waveformEl = document.getElementById('waveform')
@@ -85,14 +86,15 @@ function updateEditControls() {
   cutBtn.disabled = busy || count === 0
   // 保存は編集操作（カット/音量調整）が行われたときのみ有効
   saveBtn.disabled = busy || !canSave
-  // 音量調整は音声が読み込まれていて処理中でないときに有効
-  const volumeReady = !busy && !!wavesurfer
-  volumeInput.disabled = !volumeReady
-  volumeApplyBtn.disabled = !volumeReady
-  volumeDownBtn.disabled = !volumeReady
-  volumeUpBtn.disabled = !volumeReady
-  volumeDoubleBtn.disabled = !volumeReady
-  volumeMuteBtn.disabled = !volumeReady
+  // 音量調整・末尾へのファイル追加は、音声が読み込まれていて処理中でないときに有効
+  const audioReady = !busy && !!wavesurfer
+  volumeInput.disabled = !audioReady
+  volumeApplyBtn.disabled = !audioReady
+  volumeDownBtn.disabled = !audioReady
+  volumeUpBtn.disabled = !audioReady
+  volumeDoubleBtn.disabled = !audioReady
+  volumeMuteBtn.disabled = !audioReady
+  appendFileBtn.disabled = !audioReady
   // アンドゥ/リドゥは戻せる/進める版があるときのみ有効
   undoBtn.disabled = busy || !canUndo
   redoBtn.disabled = busy || !canRedo
@@ -263,6 +265,7 @@ async function openAndLoad() {
   zoomFactor = 1 // 新しいファイルは全体表示から始める
   statusEl.textContent = '波形を生成中…'
   openFileBtn.disabled = true
+  appendFileBtn.disabled = true
   placeholderEl.hidden = true
 
   try {
@@ -285,6 +288,45 @@ async function openAndLoad() {
       statusEl.textContent = ''
       placeholderEl.hidden = false
       placeholderEl.textContent = `読み込みに失敗しました: ${err.message}`
+    }
+  } finally {
+    if (token === loadToken) {
+      busy = false
+      openFileBtn.disabled = false
+      updateEditControls()
+    }
+  }
+}
+
+// 選択したファイルを現在の編集対象の末尾に連結する。
+// 連結結果は1本の音声として新しい版になり、以降は通常どおり編集できる。
+async function doAppend() {
+  if (busy || !wavesurfer) return
+  const filePath = await window.api.openAppendFile()
+  if (!filePath) return
+
+  const token = ++loadToken
+  busy = true
+  openFileBtn.disabled = true
+  statusEl.textContent = 'ファイルを追加中…'
+  updateEditControls()
+
+  try {
+    // メインプロセスで ffmpeg によりディスク上で連結（メモリに全展開しない）
+    const state = await window.api.appendAudio(filePath)
+    if (token !== loadToken) return
+
+    await renderWaveform(state.peaks, state.duration, token)
+    if (token !== loadToken) return
+
+    applyHistoryState(state) // 連結結果ができたので保存可能・アンドゥ可能
+    setTransportState('stopped')
+    clearSelection()
+    updateTime()
+    statusEl.textContent = `ファイルを追加しました（長さ: ${formatTime(state.duration)}）`
+  } catch (err) {
+    if (token === loadToken) {
+      statusEl.textContent = `ファイルの追加に失敗しました: ${err.message}`
     }
   } finally {
     if (token === loadToken) {
@@ -468,6 +510,7 @@ async function doSave() {
 }
 
 openFileBtn.addEventListener('click', openAndLoad)
+appendFileBtn.addEventListener('click', doAppend)
 
 playBtn.addEventListener('click', () => wavesurfer && wavesurfer.play())
 pauseBtn.addEventListener('click', () => wavesurfer && wavesurfer.pause())
