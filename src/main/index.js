@@ -121,9 +121,28 @@ ipcMain.handle('dialog:openAudioFile', async () => {
   return result.filePaths[0]
 })
 
+// 「末尾にファイルを追加」用のファイル選択ダイアログ（単一選択）。
+ipcMain.handle('dialog:openAppendFile', async () => {
+  const result = await dialog.showOpenDialog({
+    title: '末尾に追加する音声ファイルを選択',
+    properties: ['openFile'],
+    filters: [{ name: '音声ファイル (MP3 / WAV / M4A)', extensions: ['mp3', 'wav', 'm4a'] }]
+  })
+
+  if (result.canceled || result.filePaths.length === 0) {
+    return null
+  }
+  return result.filePaths[0]
+})
+
 // 指定ファイルを読み込み、版履歴を初期化して波形ピーク・長さを返す。
 ipcMain.handle('audio:load', async (_event, filePath) => {
   return session.load(filePath)
+})
+
+// 指定ファイルを現在の編集対象の末尾に連結し、新しい版の波形ピーク・長さを返す。
+ipcMain.handle('audio:append', async (_event, filePath) => {
+  return session.append(filePath)
 })
 
 // 選択範囲（複数可）をまとめてカットし、新しい版の波形ピーク・長さを返す。

@@ -3,8 +3,9 @@ import { join, extname } from 'path'
 import { mkdtempSync, rmSync } from 'fs'
 import { tmpdir } from 'os'
 import { ffmpegPath } from './binaries.js'
-import { generatePeaks } from './peaks.js'
+import { generatePeaks, probeDuration } from './peaks.js'
 import { probeAudioStream, needsNormalization, normalizeToPcmWav } from './normalize.js'
+import { convertToPcmWav, concatPcmWavs } from './concat.js'
 
 // 編集対象の範囲どうしを正規化（0〜duration にクランプ・ソート・重なり/隣接をマージ）する。
 // カット・音量調整で共用する。
@@ -42,6 +43,30 @@ function codecArgsFor(outPath) {
     default:
       throw new Error(`対応していない出力形式です: ${extname(outPath) || '(拡張子なし)'}`)
   }
+}
+
+// 末尾へ追加できる入力形式（読み込みと同じ MP3 / WAV / M4A）
+const APPENDABLE_EXTENSIONS = new Set(['.mp3', '.wav', '.m4a'])
+
+// 連結後の長さの上限（要件5.1 の「最長3時間程度」）。
+// これを超える連結は、時間のかかる変換を始める前に中断する。
+const MAX_APPEND_DURATION = 3 * 60 * 60
+
+// エラー表示用に秒を「2時間55分3秒」の形へ整形する
+function formatDurationJa(seconds) {
+  const total = Math.max(0, Math.round(seconds))
+  const h = Math.floor(total / 3600)
+  const m = Math.floor((total % 3600) / 60)
+  const s = total % 60
+  return h > 0 ? `${h}時間${m}分${s}秒` : `${m}分${s}秒`
+}
+
+// 現在の編集対象を、変換せずそのまま concat の入力にできるか。
+// 連結パラメータは現在の編集対象から取っているため、あとは中身が
+// 16bit PCM の WAV かどうかだけを見ればよい。
+// （カット/音量調整の中間ファイルは FLAC、元ファイルは MP3/M4A のこともある）
+function isPcmWavFile(filePath, info) {
+  return extname(filePath).toLowerCase() === '.wav' && info.codecName === 'pcm_s16le'
 }
 
 // 削除範囲の補集合（＝残す範囲）を求める
@@ -299,6 +324,107 @@ export class EditSession {
         resolve()
       })
     })
+  }
+
+  /**
+   * 別の音声ファイルを現在の編集対象の末尾に連結し、新しい版を積む。
+   * カット・音量調整と同じく、結果は一時ファイルとして生成され、
+   * 以降は1本の音声として通常どおり編集できる（元ファイルは変更しない）。
+   *
+   * concat demuxer は入力どうしのパラメータ不一致を検出せず壊れた出力を作るため、
+   * 追加ファイルは「元から同じパラメータに見えても」必ず変換を通し、
+   * 現在の編集対象も同じパラメータの 16bit PCM WAV でなければ変換してから連結する。
+   * 変換に使う値（サンプルレート・チャンネル数）は現在の編集対象のものに揃える。
+   *
+   * 連結後の長さが上限（要件5.1 の3時間）を超える場合は、変換を始める前に中断する。
+   *
+   * @param {string} filePath 末尾に追加する音声ファイル（MP3 / WAV / M4A）
+   */
+  async append(filePath) {
+    const cur = this.current()
+    if (!cur) throw new Error('音声が読み込まれていません')
+
+    const ext = extname(filePath || '').toLowerCase()
+    if (!APPENDABLE_EXTENSIONS.has(ext)) {
+      throw new Error(
+        `対応していない形式です: ${ext || '(拡張子なし)'}（MP3 / WAV / M4A を選択してください）`
+      )
+    }
+
+    // 追加ファイルが音声として読めるかを、変換を始める前に確かめる
+    await probeAudioStream(filePath)
+
+    // 連結後の長さが上限を超えないかも、同じく変換を始める前に確かめる。
+    // 判定は ffprobe が返す長さの単純な合計で、実際の連結結果とは
+    // 数十ミリ秒ずれうるが（MP3 のパディング等）、上限判定にはこの精度で足りる。
+    const addDuration = await probeDuration(filePath)
+    const totalDuration = cur.duration + addDuration
+    if (totalDuration > MAX_APPEND_DURATION) {
+      // ステータス表示は1行なので、内訳は記号でコンパクトに示す
+      throw new Error(
+        `連結後が上限の3時間を超えるため追加できません` +
+          `（${formatDurationJa(cur.duration)} ＋ ${formatDurationJa(addDuration)}` +
+          ` ＝ ${formatDurationJa(totalDuration)}）`
+      )
+    }
+
+    // 連結の基準になるパラメータは現在の編集対象から取る
+    const target = await probeAudioStream(cur.path)
+    if (target.sampleRate === null || target.channels === null) {
+      throw new Error('現在の音声のサンプルレート・チャンネル数を取得できませんでした')
+    }
+    const params = { sampleRate: target.sampleRate, channels: target.channels }
+
+    const outPath = this.nextTempPath('wav', 'append')
+    const temps = [] // 連結のためだけに作る中間ファイル。完了後・失敗時とも削除する。
+    try {
+      const addPath = this.nextTempPath('wav', 'append-add')
+      temps.push(addPath)
+      await convertToPcmWav(filePath, addPath, params)
+
+      let basePath = cur.path
+      if (!isPcmWavFile(cur.path, target)) {
+        basePath = this.nextTempPath('wav', 'append-base')
+        temps.push(basePath)
+        await convertToPcmWav(cur.path, basePath, params)
+      }
+
+      const listPath = this.nextTempPath('txt', 'append-list')
+      temps.push(listPath)
+      await concatPcmWavs([basePath, addPath], listPath, outPath)
+    } catch (err) {
+      // 失敗した場合は版を積まない。作りかけの出力も含めて捨て、現在の版を維持する。
+      this.removeTempFiles([...temps, outPath])
+      throw err
+    }
+    this.removeTempFiles(temps)
+
+    // 連結後の実際の長さ・波形を新しいファイルから取得
+    const { peaks, duration } = await generatePeaks(outPath)
+
+    // やり直し（redo）側の版が残っていれば破棄してから新しい版を積む
+    this.discardRedoTail()
+    this.versions.push({
+      path: outPath,
+      duration,
+      peaks,
+      isTemp: true,
+      op: { type: 'append', source: filePath }
+    })
+    this.index = this.versions.length - 1
+
+    return this.state()
+  }
+
+  // 中間生成した一時ファイルを削除する（失敗時の後始末にも使う）
+  removeTempFiles(paths) {
+    for (const p of paths) {
+      try {
+        rmSync(p, { force: true })
+      } catch {
+        /* クリーンアップ失敗は無視 */
+      }
+    }
   }
 
   // カット等の編集が1回でも行われているか（＝編集操作から生まれた版にいるか）。

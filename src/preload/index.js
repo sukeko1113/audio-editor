@@ -5,9 +5,16 @@ contextBridge.exposeInMainWorld('api', {
   // 音声ファイル選択ダイアログを開き、選択されたファイルパスを返す（キャンセル時は null）
   openAudioFile: () => ipcRenderer.invoke('dialog:openAudioFile'),
 
+  // 「末尾にファイルを追加」用のファイル選択ダイアログを開き、選択されたファイルパスを返す（キャンセル時は null）
+  openAppendFile: () => ipcRenderer.invoke('dialog:openAppendFile'),
+
   // 指定パスの音声を読み込み、波形描画用のピークデータと長さ(秒)を返す
   // 返り値: { peaks: number[], duration: number }
   loadAudio: (filePath) => ipcRenderer.invoke('audio:load', filePath),
+
+  // 指定パスの音声を、現在の編集対象の末尾に連結する
+  // 返り値: 連結後の { peaks: number[], duration: number }
+  appendAudio: (filePath) => ipcRenderer.invoke('audio:append', filePath),
 
   // 選択範囲（[{start,end}, ...]）をまとめてカットする
   // 返り値: カット後の { peaks: number[], duration: number }
