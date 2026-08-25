@@ -37,8 +37,10 @@ jobs:
       - name: 依存パッケージをインストール
         run: npm ci
 
+      # CI 上の electron-builder は「ドラフトリリースがあれば公開する」動きをして
+      # GH_TOKEN を要求するため、公開はせずファイル生成だけに固定する。
       - name: インストーラーをビルド
-        run: npm run build:win
+        run: npm run build:win -- --publish never
 
       - name: インストーラーをアーティファクトとして保存
         uses: actions/upload-artifact@v4
