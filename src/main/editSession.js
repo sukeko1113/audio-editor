@@ -1,6 +1,6 @@
 import { spawn } from 'child_process'
-import { join, extname } from 'path'
-import { mkdtempSync, rmSync } from 'fs'
+import { join, extname, dirname, basename } from 'path'
+import { mkdtempSync, rmSync, renameSync } from 'fs'
 import { tmpdir } from 'os'
 import { ffmpegPath } from './binaries.js'
 import { generatePeaks, probeDuration } from './peaks.js'
@@ -497,12 +497,40 @@ export class EditSession {
    * 現在の編集結果を指定パスへ書き出す。
    * 入力は現在の版のファイル（カット済みなら中間ファイル、未編集なら元ファイル）。
    * 出力コーデックは outPath の拡張子から決まる。元ファイルは変更しない。
+   *
+   * 書き出しはいったん同じフォルダーの一時ファイルへ行い、完成を確かめてから
+   * 目的の名前へ付け替える。目的の名前のファイルが「書き込み途中の状態」で
+   * 存在する時間を無くすためで、これが無いと次のような失敗が起きうる:
+   *   - M4A は再生に必要な情報が最後に書かれるため、途中のファイルを開くと
+   *     「ファイル形式がサポートされていないか、ファイルが破損している可能性が
+   *     あります（0xC00D36C4）」となり、プロパティにも何も表示されない
+   *   - 途中で失敗した場合に、壊れたファイルが目的の名前で残ってしまう
+   * 付け替え前には ffprobe で読めることも確認する。
    */
   async export(outPath) {
     const cur = this.current()
     if (!cur) throw new Error('音声が読み込まれていません')
-    await this.runFfmpegExport(cur.path, outPath)
+
+    const tempPath = this.exportTempPath(outPath)
+    try {
+      await this.runFfmpegExport(cur.path, tempPath)
+      // 生成物が音声として実際に読めることを確認してから置き換える
+      await probeAudioStream(tempPath)
+      renameSync(tempPath, outPath)
+    } catch (err) {
+      this.removeTempFiles([tempPath])
+      throw err
+    }
     return outPath
+  }
+
+  // 書き出し用の一時ファイルのパス。ffmpeg は拡張子で出力形式を決めるため、
+  // 拡張子は目的のファイルと同じものを保つ。付け替え（rename）が確実に働くよう、
+  // 保存先と同じフォルダーに作る。
+  exportTempPath(outPath) {
+    const ext = extname(outPath)
+    this.tempCounter += 1
+    return join(dirname(outPath), `${basename(outPath, ext)}.saving-${this.tempCounter}${ext}`)
   }
 
   // ffmpeg で入力ファイルを指定フォーマットへ変換して書き出す。
