@@ -138,7 +138,40 @@ npm run dev
 | `npm run dev` | 開発モードでアプリを起動（ホットリロード対応） |
 | `npm run build` | レンダラー・メイン・プリロードをビルド（`out/` へ出力） |
 | `npm start` | ビルド済みのアプリをプレビュー起動 |
-| `npm run build:win` | Windows 用インストーラー（NSIS `.exe`）を `dist/` に生成 |
+| `npm run build:win` | Windows 用インストーラー（NSIS `.exe`）を `release/` に生成 |
+
+## インストーラーの作成（配布用）
+
+### 方法1: Windows PC でビルドする
+
+セットアップ（`npm install` まで）が済んだ状態で、次を実行します。
+
+```bat
+npm run build:win
+```
+
+`release/` フォルダーに以下が生成されます。
+
+| ファイル | 内容 |
+| --- | --- |
+| `AudioEditor Setup 0.1.0.exe` | 配布用インストーラー（NSIS）。実行するとインストール先を選んでインストールできます |
+| `win-unpacked/` | インストール前のアプリ本体一式（`AudioEditor.exe` を直接実行しても動きます） |
+
+インストーラーの挙動は `electron-builder.yml` で決めています（インストール先の変更を許可・デスクトップ／スタートメニューにショートカットを作成）。ffmpeg / ffprobe は `asar` の外へ展開して同梱するため、**インストール後はインターネット接続なしで全機能が動きます**。
+
+> **補足**: `npm install` は「実行中の OS 向け」の ffmpeg バイナリしか取得しません。Windows 用インストーラーには Windows 版の ffmpeg が必要なため、**Windows PC 上でセットアップからビルドまで行ってください**。
+
+### 方法2: GitHub Actions でビルドする（Windows PC が手元に無い場合）
+
+`.github/workflows/build-windows.yml` を用意してあります。GitHub の Windows ランナー上で `npm ci` → `npm run build:win` を実行し、できたインストーラーをアーティファクトとして保存します。
+
+- `main` ブランチ・`claude/**` ブランチへの push、`v*` タグの push で自動実行されます（ドキュメントのみの変更を除く）。
+- 手動で実行する場合は、GitHub の **Actions** タブ →「Windows インストーラー」→ **Run workflow**。
+- 完了後、その実行ページ下部の **Artifacts** から `AudioEditor-windows-installer` をダウンロードすると、中にインストーラーの `.exe` が入っています。
+
+### Linux / macOS からビルドできない理由
+
+electron-builder の NSIS ターゲットは、**アンインストーラーを生成する過程で Windows の実行ファイルを実際に動かします**。そのため Linux / macOS からのクロスビルドには wine が必要で、wine の無い環境ではアプリ本体（`release/win-unpacked/`）までは作れてもインストーラーの生成で止まります。上記のどちらかの方法を使ってください。
 
 ## プロジェクト構成
 

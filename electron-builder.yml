@@ -6,6 +6,11 @@ directories:
 files:
   - out/**/*
   - package.json
+  # ffprobe-static は全 OS 分のバイナリ(合計 300MB 超)を持っているため、
+  # 実行するプラットフォーム(win32)以外は同梱しない。
+  # ffprobe-static は実行時に os.platform() でパスを決めるので、win32 だけあればよい。
+  - '!node_modules/ffprobe-static/bin/darwin/**'
+  - '!node_modules/ffprobe-static/bin/linux/**'
 # ffmpeg / ffprobe バイナリは asar 内から実行できないため展開する
 asarUnpack:
   - node_modules/ffmpeg-static/**

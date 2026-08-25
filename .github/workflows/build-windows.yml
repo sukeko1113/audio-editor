@@ -1,0 +1,51 @@
+# Windows 用インストーラー（NSIS .exe）を GitHub の Windows ランナーでビルドする。
+#
+# electron-builder の NSIS ターゲットはアンインストーラーを作る過程で Windows の
+# 実行ファイルを実際に動かすため、Linux / macOS からのクロスビルドには wine が要る。
+# ここでは windows-latest 上でそのままビルドし、成果物をアーティファクトとして残す。
+name: Windows インストーラー
+
+on:
+  # 手動実行（Actions タブ →「Windows インストーラー」→ Run workflow）
+  workflow_dispatch:
+  push:
+    branches:
+      - main
+      - 'claude/**'
+    # v1.0.0 のようなタグを打ったときにもビルドする
+    tags:
+      - 'v*'
+    # ドキュメントだけの変更ではビルドしない
+    paths-ignore:
+      - '**/*.md'
+
+jobs:
+  build:
+    runs-on: windows-latest
+
+    steps:
+      - name: ソースコードを取得
+        uses: actions/checkout@v4
+
+      - name: Node.js をセットアップ
+        uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+          cache: 'npm'
+
+      # ffmpeg-static / ffprobe-static がここで Windows 版バイナリを取得する
+      - name: 依存パッケージをインストール
+        run: npm ci
+
+      - name: インストーラーをビルド
+        run: npm run build:win
+
+      - name: インストーラーをアーティファクトとして保存
+        uses: actions/upload-artifact@v4
+        with:
+          name: AudioEditor-windows-installer
+          path: |
+            release/*.exe
+            release/*.exe.blockmap
+          if-no-files-found: error
+          retention-days: 30
