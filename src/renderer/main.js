@@ -38,7 +38,6 @@ let regionsPlugin = null
 let selectedRegion = null
 let loadToken = 0 // 音声の読み込み/カットごとにインクリメントし、キャッシュを回避する
 let busy = false // カット処理中などの多重操作を防ぐ
-let canSave = false // 編集操作（カット/音量調整）が行われ、保存可能な中間ファイルが存在するか
 let canUndo = false // 1つ前の版に戻せるか
 let canRedo = false // 1つ先の版に進めるか
 
@@ -92,10 +91,12 @@ function updateEditControls() {
   deleteRegionBtn.disabled = busy || !selectedRegion
   clearRegionsBtn.disabled = busy || count === 0
   cutBtn.disabled = busy || count === 0
-  // 保存は編集操作（カット/音量調整）が行われたときのみ有効
-  saveBtn.disabled = busy || !canSave
   // 音量調整・末尾へのファイル追加は、音声が読み込まれていて処理中でないときに有効
   const audioReady = !busy && !!wavesurfer
+  // 保存（書き出し）は音声が読み込まれていれば常に有効。
+  // 未編集のまま MP3 / WAV / M4A へ形式を変換したいだけ、という使い方もあるため
+  // 編集操作の有無では制限しない（MP4 から音声だけを取り出す場合が典型）。
+  saveBtn.disabled = !audioReady
   volumeInput.disabled = !audioReady
   volumeApplyBtn.disabled = !audioReady
   volumeDownBtn.disabled = !audioReady
@@ -163,10 +164,9 @@ function applyZoom() {
   updateZoomControls()
 }
 
-// main から返る履歴/保存の状態（canUndo / canRedo / hasEdits）を反映する。
+// main から返る履歴の状態（canUndo / canRedo）を反映する。
 // load / cut / volume / undo / redo の各処理後に共通で呼ぶ。
 function applyHistoryState(state) {
-  canSave = !!state.hasEdits
   canUndo = !!state.canUndo
   canRedo = !!state.canRedo
   updateEditControls()
@@ -269,7 +269,6 @@ async function openAndLoad() {
 
   const token = ++loadToken
   busy = true
-  canSave = false // 新規読み込み時点では未編集なので保存は無効
   zoomFactor = 1 // 新しいファイルは全体表示から始める
   statusEl.textContent = '波形を生成中…'
   openFileBtn.disabled = true
@@ -286,7 +285,7 @@ async function openAndLoad() {
 
     transportEl.hidden = false
     editToolsEl.hidden = false
-    applyHistoryState(state) // 読み込み直後は未編集（undo/redo/save すべて無効）
+    applyHistoryState(state) // 読み込み直後は未編集（undo/redo は無効）
     setTransportState('stopped')
     clearSelection()
     updateTime()
@@ -327,7 +326,7 @@ async function doAppend() {
     await renderWaveform(state.peaks, state.duration, token)
     if (token !== loadToken) return
 
-    applyHistoryState(state) // 連結結果ができたので保存可能・アンドゥ可能
+    applyHistoryState(state) // 連結結果ができたのでアンドゥ可能
     setTransportState('stopped')
     clearSelection()
     updateTime()
@@ -492,7 +491,7 @@ async function navigateHistory(direction) {
 
 // 現在の編集結果を、選んだフォーマットでディスクへ書き出す
 async function doSave() {
-  if (busy || !canSave) return
+  if (busy || !wavesurfer) return
 
   busy = true
   openFileBtn.disabled = true
