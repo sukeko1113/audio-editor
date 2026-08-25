@@ -31,16 +31,35 @@ function mergeIntervals(intervals, duration) {
   return merged
 }
 
+// 3ch 以上（5.1ch 等）の音声をステレオへダウンミックスするフィルタ。
+// モノラル・ステレオはそのまま通す（不要な変換をしない）。
+//
+// 動画から取り出した音声は 5.1ch のことがあり、そのまま AAC で書き出すと
+// 6ch の M4A になる。Windows のプレーヤーはマルチチャンネル AAC を再生できず
+// 「ファイルを再生できません…コーデックをサポートしていない可能性があります」
+// になるため、一般的な環境で再生できるステレオに落として書き出す。
+// （MP3 は libmp3lame がステレオまでのため、もともと ffmpeg が同じ変換を行う）
+const DOWNMIX_FILTER = ['-af', 'aformat=channel_layouts=mono|stereo']
+
 // 出力パスの拡張子から ffmpeg の音声コーデック引数を決定する。
 //   wav → pcm_s16le（16bit PCM） / mp3 → libmp3lame（192kbps） / m4a → aac（192kbps）
+// WAV は可逆・非圧縮の保存先なので、チャンネル数は元のまま保つ。
 function codecArgsFor(outPath) {
   switch (extname(outPath).toLowerCase()) {
     case '.wav':
       return ['-c:a', 'pcm_s16le']
     case '.mp3':
-      return ['-c:a', 'libmp3lame', '-b:a', '192k']
+      return [...DOWNMIX_FILTER, '-c:a', 'libmp3lame', '-b:a', '192k']
     case '.m4a':
-      return ['-c:a', 'aac', '-b:a', '192k']
+      return [
+        ...DOWNMIX_FILTER,
+        '-c:a', 'aac',
+        '-profile:a', 'aac_low', // 最も互換性の高い AAC-LC を明示する
+        '-b:a', '192k',
+        // 再生に必要な情報(moov)をファイル先頭に置く。末尾にあると、
+        // 読み込みの途中や一部のプレーヤーで「再生できない」と判断されることがある。
+        '-movflags', '+faststart'
+      ]
     default:
       throw new Error(`対応していない出力形式です: ${extname(outPath) || '(拡張子なし)'}`)
   }
@@ -494,7 +513,9 @@ export class EditSession {
         '-v', 'error',
         '-nostdin',
         '-i', inputPath,
-        '-map', '0:a',
+        // 音声トラックは先頭の1本だけを書き出す。複数トラックが入った音声ファイルを
+        // そのまま書き出すと、再生できないファイルになることがある。
+        '-map', '0:a:0',
         ...codecArgsFor(outPath),
         '-y',
         outPath
