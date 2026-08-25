@@ -5,6 +5,7 @@ import { tmpdir } from 'os'
 import { ffmpegPath } from './binaries.js'
 import { generatePeaks, probeDuration } from './peaks.js'
 import { probeAudioStream, needsNormalization, normalizeToPcmWav } from './normalize.js'
+import { hasVideoStream, streamCopyExtensionFor, copyAudioTrack } from './extract.js'
 import { convertToPcmWav, concatPcmWavs } from './concat.js'
 
 // 編集対象の範囲どうしを正規化（0〜duration にクランプ・ソート・重なり/隣接をマージ）する。
@@ -45,8 +46,12 @@ function codecArgsFor(outPath) {
   }
 }
 
-// 末尾へ追加できる入力形式（読み込みと同じ MP3 / WAV / M4A）
-const APPENDABLE_EXTENSIONS = new Set(['.mp3', '.wav', '.m4a'])
+// 書き出せる出力形式（codecArgsFor が対応している拡張子）
+const EXPORTABLE_EXTENSIONS = new Set(['mp3', 'wav', 'm4a'])
+
+// 末尾へ追加できる入力形式（読み込みと同じ MP3 / WAV / M4A / MP4）。
+// MP4 は映像を無視して音声トラックだけを連結する。
+const APPENDABLE_EXTENSIONS = new Set(['.mp3', '.wav', '.m4a', '.mp4'])
 
 // 連結後の長さの上限（要件5.1 の「最長3時間程度」）。
 // これを超える連結は、時間のかかる変換を始める前に中断する。
@@ -179,6 +184,10 @@ export class EditSession {
   /**
    * 新しいファイルを読み込み、版履歴を初期化する。
    *
+   * 動画（MP4 等）が渡された場合は、音声トラックだけを一時ファイルへ取り出して
+   * それを編集対象にする（可能なら再エンコードなし）。以降の処理は音声ファイルを
+   * 読み込んだ場合とまったく同じで、映像は一切扱わない。
+   *
    * ブラウザが再生できないコーデック（ADPCM WAV 等）の場合はここで
    * 16bit PCM WAV の一時ファイルへ変換し、以降の版・再生・書き出しは
    * すべてその正規化済みファイルを入力にする。元ファイルは変更しない。
@@ -191,10 +200,31 @@ export class EditSession {
 
     let sourcePath = filePath
     let isTemp = false
-    const info = await probeAudioStream(filePath)
+    // 音声ストリームが無いファイル（映像のみの動画など）はここで弾かれる
+    let info = await probeAudioStream(filePath)
+
+    // 動画（MP4 等）は、まず音声トラックだけを一時ファイルへ取り出す。
+    // 以降の再生・波形・カット・音量調整・書き出しは、取り出した音声を入力にする。
+    if (await hasVideoStream(filePath)) {
+      const copyExt = streamCopyExtensionFor(info.codecName)
+      if (copyExt && !needsNormalization(info)) {
+        // 再エンコードせずコンテナを入れ替えるだけ（音質そのまま・高速）
+        sourcePath = this.nextTempPath(copyExt, 'source')
+        await copyAudioTrack(filePath, sourcePath)
+      } else {
+        // ブラウザが再生できないコーデック（AC-3 等）の音声トラックは、
+        // 取り出しと同時に 16bit PCM WAV へ変換する（正規化を兼ねる）
+        sourcePath = this.nextTempPath('wav', 'source')
+        await normalizeToPcmWav(filePath, sourcePath, info)
+      }
+      isTemp = true
+      // 以降の判定は、取り出したあとのファイルの情報で行う
+      info = await probeAudioStream(sourcePath)
+    }
+
     if (needsNormalization(info)) {
       const normalizedPath = this.nextTempPath('wav', 'source')
-      await normalizeToPcmWav(filePath, normalizedPath, info)
+      await normalizeToPcmWav(sourcePath, normalizedPath, info)
       sourcePath = normalizedPath
       isTemp = true
     }
@@ -347,7 +377,7 @@ export class EditSession {
     const ext = extname(filePath || '').toLowerCase()
     if (!APPENDABLE_EXTENSIONS.has(ext)) {
       throw new Error(
-        `対応していない形式です: ${ext || '(拡張子なし)'}（MP3 / WAV / M4A を選択してください）`
+        `対応していない形式です: ${ext || '(拡張子なし)'}（MP3 / WAV / M4A / MP4 を選択してください）`
       )
     }
 
@@ -435,9 +465,13 @@ export class EditSession {
     return !!(cur && cur.op)
   }
 
-  // 元の読み込みファイルの拡張子（デフォルトの保存形式に使う）を返す
+  // 元の読み込みファイルの拡張子（デフォルトの保存形式に使う）を返す。
+  // 書き出せる形式は MP3 / WAV / M4A のみなので、それ以外はここで読み替える。
+  // 動画（MP4）から取り出した音声は、同じ AAC で収められる M4A を既定にする。
   originalExtension() {
-    return extname(this.originalPath || '').replace('.', '').toLowerCase() || 'mp3'
+    const ext = extname(this.originalPath || '').replace('.', '').toLowerCase()
+    if (ext === 'mp4') return 'm4a'
+    return EXPORTABLE_EXTENSIONS.has(ext) ? ext : 'mp3'
   }
 
   /**

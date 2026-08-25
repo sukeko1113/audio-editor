@@ -107,10 +107,13 @@ function createWindow() {
 // レンダラーからの「ファイルを開く」要求に応じてダイアログを表示する
 ipcMain.handle('dialog:openAudioFile', async () => {
   const result = await dialog.showOpenDialog({
-    title: '音声ファイルを開く',
+    title: '音声・動画ファイルを開く',
     properties: ['openFile'],
     filters: [
-      { name: '音声ファイル (MP3 / WAV / M4A)', extensions: ['mp3', 'wav', 'm4a'] },
+      {
+        name: '音声・動画ファイル (MP3 / WAV / M4A / MP4)',
+        extensions: ['mp3', 'wav', 'm4a', 'mp4']
+      },
       { name: 'すべてのファイル', extensions: ['*'] }
     ]
   })
@@ -124,9 +127,14 @@ ipcMain.handle('dialog:openAudioFile', async () => {
 // 「末尾にファイルを追加」用のファイル選択ダイアログ（単一選択）。
 ipcMain.handle('dialog:openAppendFile', async () => {
   const result = await dialog.showOpenDialog({
-    title: '末尾に追加する音声ファイルを選択',
+    title: '末尾に追加する音声・動画ファイルを選択',
     properties: ['openFile'],
-    filters: [{ name: '音声ファイル (MP3 / WAV / M4A)', extensions: ['mp3', 'wav', 'm4a'] }]
+    filters: [
+      {
+        name: '音声・動画ファイル (MP3 / WAV / M4A / MP4)',
+        extensions: ['mp3', 'wav', 'm4a', 'mp4']
+      }
+    ]
   })
 
   if (result.canceled || result.filePaths.length === 0) {
