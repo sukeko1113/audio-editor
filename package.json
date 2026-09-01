@@ -1,6 +1,6 @@
 {
   "name": "audio-editor",
-  "version": "0.1.0",
+  "version": "0.2.0",
   "description": "波形を見ながら音声をカット・音量調整して書き出すデスクトップ音声編集アプリ（Windows 向け）",
   "main": "out/main/index.js",
   "author": "",
