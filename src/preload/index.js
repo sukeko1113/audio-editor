@@ -29,7 +29,10 @@ contextBridge.exposeInMainWorld('api', {
   undo: () => ipcRenderer.invoke('audio:undo'),
   redo: () => ipcRenderer.invoke('audio:redo'),
 
-  // 現在の編集結果を、保存ダイアログで選んだフォーマット/パスへ書き出す
-  // 返り値: 保存成功時 { path }、キャンセル時 null（失敗時は例外）
+  // 現在の編集結果を、保存ダイアログで選んだフォーマット/パスへ書き出す。
+  // 編集が無くても、入力と違う形式を選べば形式変換として書き出せる。
+  // 返り値: 書き出した場合 { path, converted }（converted=true は形式変換のみの保存）、
+  //         編集も形式変換も無く書き出さなかった場合 { unchanged: true }、
+  //         キャンセル時 null（失敗時は例外）
   exportAudio: () => ipcRenderer.invoke('audio:export')
 })

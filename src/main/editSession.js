@@ -6,6 +6,7 @@ import { ffmpegPath } from './binaries.js'
 import { generatePeaks, probeDuration } from './peaks.js'
 import { probeAudioStream, needsNormalization, normalizeToPcmWav } from './normalize.js'
 import { convertToPcmWav, concatPcmWavs } from './concat.js'
+import { outputFormatFor, codecArgsFor, isSameFormat } from './format.js'
 
 // 編集対象の範囲どうしを正規化（0〜duration にクランプ・ソート・重なり/隣接をマージ）する。
 // カット・音量調整で共用する。
@@ -28,21 +29,6 @@ function mergeIntervals(intervals, duration) {
     }
   }
   return merged
-}
-
-// 出力パスの拡張子から ffmpeg の音声コーデック引数を決定する。
-//   wav → pcm_s16le（16bit PCM） / mp3 → libmp3lame（192kbps） / m4a → aac（192kbps）
-function codecArgsFor(outPath) {
-  switch (extname(outPath).toLowerCase()) {
-    case '.wav':
-      return ['-c:a', 'pcm_s16le']
-    case '.mp3':
-      return ['-c:a', 'libmp3lame', '-b:a', '192k']
-    case '.m4a':
-      return ['-c:a', 'aac', '-b:a', '192k']
-    default:
-      throw new Error(`対応していない出力形式です: ${extname(outPath) || '(拡張子なし)'}`)
-  }
 }
 
 // 末尾へ追加できる入力形式（読み込みと同じ MP3 / WAV / M4A）
@@ -442,14 +428,41 @@ export class EditSession {
 
   /**
    * 現在の編集結果を指定パスへ書き出す。
-   * 入力は現在の版のファイル（カット済みなら中間ファイル、未編集なら元ファイル）。
+   * 入力は現在の版のファイル（カット済みなら中間ファイル、未編集なら読み込み時のファイル）。
    * 出力コーデックは outPath の拡張子から決まる。元ファイルは変更しない。
+   *
+   * 編集が1つも無い場合は「形式変換だけの保存」になるため、元ファイルの中身
+   * （コンテナ／コーデック）を調べ、出力形式と同じなら書き出さずに中断する。
+   * 判定は拡張子ではなく中身で行うので、ADPCM の .wav を .wav（pcm_s16le）
+   * として保存する場合は変換ありとして書き出す。読み込み時に正規化した音声
+   * （ADPCM や極端なサンプルレート）も、その時点で中身が変わっているため
+   * つねに変換ありとして扱う。
+   *
+   * 書き出しても版履歴は変更しない（形式変換だけの場合も同じ）。
+   *
+   * @returns {Promise<{ path: string, converted: boolean } | { unchanged: true }>}
+   *   unchanged: 編集も形式変換も無いため書き出さなかった
+   *   converted: 編集は無く、形式変換として書き出した
    */
   async export(outPath) {
     const cur = this.current()
     if (!cur) throw new Error('音声が読み込まれていません')
+
+    // 未対応の拡張子は、ffmpeg を起動する前にここで弾く
+    const format = outputFormatFor(outPath)
+
+    // 編集が1つも無ければ「形式変換だけの保存」。
+    // 編集があれば、形式が同じでも書き出す内容は元ファイルと異なるので必ず書き出す。
+    const conversionOnly = !this.hasEdits()
+    if (conversionOnly) {
+      const info = await probeAudioStream(this.originalPath)
+      if (!needsNormalization(info) && isSameFormat(info, format)) {
+        return { unchanged: true }
+      }
+    }
+
     await this.runFfmpegExport(cur.path, outPath)
-    return outPath
+    return { path: outPath, converted: conversionOnly }
   }
 
   // ffmpeg で入力ファイルを指定フォーマットへ変換して書き出す。

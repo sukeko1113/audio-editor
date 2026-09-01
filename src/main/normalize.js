@@ -35,16 +35,19 @@ function toPositiveInt(value) {
 }
 
 /**
- * ffprobe で先頭の音声ストリームの codec_name / sample_rate / channels を取得する。
- * メタデータのみ読むため軽量。
- * @returns {Promise<{ codecName: string, sampleRate: number|null, channels: number|null }>}
+ * ffprobe でコンテナの format_name と、先頭の音声ストリームの
+ * codec_name / sample_rate / channels を取得する。メタデータのみ読むため軽量。
+ *
+ * 正規化の判定のほか、連結前のパラメータ取得（editSession）と、
+ * 保存時の「出力形式が入力ファイルと同じか」の判定（format.js）でも使う。
+ * @returns {Promise<{ formatName: string, codecName: string, sampleRate: number|null, channels: number|null }>}
  */
 export function probeAudioStream(filePath) {
   return new Promise((resolve, reject) => {
     const args = [
       '-v', 'error',
       '-select_streams', 'a:0',
-      '-show_entries', 'stream=codec_name,sample_rate,channels',
+      '-show_entries', 'format=format_name:stream=codec_name,sample_rate,channels',
       '-of', 'json',
       filePath
     ]
@@ -59,9 +62,11 @@ export function probeAudioStream(filePath) {
         reject(new Error(`ffprobe failed (code ${code}): ${err.trim()}`))
         return
       }
+      let format
       let stream
       try {
         const parsed = JSON.parse(out)
+        format = parsed.format || {}
         stream = parsed.streams && parsed.streams[0]
       } catch {
         reject(new Error('音声情報を解析できませんでした'))
@@ -72,6 +77,8 @@ export function probeAudioStream(filePath) {
         return
       }
       resolve({
+        // コンテナ名。"mov,mp4,m4a,3gp,3g2,mj2" のようにカンマ区切りで返ることがある
+        formatName: String(format.format_name || ''),
         codecName: String(stream.codec_name || ''),
         sampleRate: toPositiveInt(stream.sample_rate),
         channels: toPositiveInt(stream.channels)
