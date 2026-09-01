@@ -167,17 +167,23 @@ ipcMain.handle('audio:volume', async (_event, { factor, regions }) => {
 })
 
 // 現在の編集結果を、保存ダイアログで選んだフォーマット/パスへ書き出す。
-// キャンセル時は null、成功時は { path } を返す。ffmpeg エラーは例外として伝播する。
+// 編集が無い場合は「形式変換だけの保存」になるため、書き出すかどうかは
+// 出力形式が決まるダイアログのあとに EditSession#export が判断する。
+// キャンセル時は null、書き出した場合は { path, converted }、
+// 編集も形式変換も無く書き出さなかった場合は { unchanged: true } を返す。
+// ffmpeg エラーは例外として伝播する。
 ipcMain.handle('audio:export', async () => {
   if (!session.currentPath()) {
     throw new Error('音声が読み込まれていません')
   }
 
   const ext = session.originalExtension()
-  // デフォルトのファイル名：元ファイル名 + "-edited" + 元の拡張子
+  const hasEdits = session.hasEdits()
+  // デフォルトのファイル名：元ファイル名 + "-edited"（編集が無い場合は "-converted"）+ 元の拡張子。
+  // 元ファイルを上書きしないよう、どちらの場合も接尾辞を付ける（要件4.5）。
   const originalPath = session.originalPath || ''
   const base = basename(originalPath, extname(originalPath)) || 'audio'
-  const defaultPath = `${base}-edited.${ext}`
+  const defaultPath = `${base}${hasEdits ? '-edited' : '-converted'}.${ext}`
 
   // 元ファイルと同じ形式をデフォルト（先頭）に並べる
   const allFilters = [
@@ -191,7 +197,7 @@ ipcMain.handle('audio:export', async () => {
   ]
 
   const result = await dialog.showSaveDialog({
-    title: '編集した音声を保存',
+    title: hasEdits ? '編集した音声を保存' : '音声を保存',
     defaultPath,
     filters
   })
@@ -200,8 +206,7 @@ ipcMain.handle('audio:export', async () => {
     return null
   }
 
-  const outPath = await session.export(result.filePath)
-  return { path: outPath }
+  return session.export(result.filePath)
 })
 
 app.whenReady().then(() => {

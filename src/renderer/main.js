@@ -38,7 +38,7 @@ let regionsPlugin = null
 let selectedRegion = null
 let loadToken = 0 // 音声の読み込み/カットごとにインクリメントし、キャッシュを回避する
 let busy = false // カット処理中などの多重操作を防ぐ
-let canSave = false // 編集操作（カット/音量調整）が行われ、保存可能な中間ファイルが存在するか
+let fileLoaded = false // 音声が読み込まれているか（保存は編集の有無に関わらず常に可能）
 let canUndo = false // 1つ前の版に戻せるか
 let canRedo = false // 1つ先の版に進めるか
 
@@ -92,10 +92,12 @@ function updateEditControls() {
   deleteRegionBtn.disabled = busy || !selectedRegion
   clearRegionsBtn.disabled = busy || count === 0
   cutBtn.disabled = busy || count === 0
-  // 保存は編集操作（カット/音量調整）が行われたときのみ有効
-  saveBtn.disabled = busy || !canSave
   // 音量調整・末尾へのファイル追加は、音声が読み込まれていて処理中でないときに有効
   const audioReady = !busy && !!wavesurfer
+  // 保存はファイルが開かれていれば常に有効。編集が無くても形式変換として
+  // 書き出せるため、編集も形式変換も無い場合の中断は保存ダイアログで
+  // 出力形式が決まったあとに main 側で判断する。
+  saveBtn.disabled = !audioReady || !fileLoaded
   volumeInput.disabled = !audioReady
   volumeApplyBtn.disabled = !audioReady
   volumeDownBtn.disabled = !audioReady
@@ -163,10 +165,10 @@ function applyZoom() {
   updateZoomControls()
 }
 
-// main から返る履歴/保存の状態（canUndo / canRedo / hasEdits）を反映する。
+// main から返る履歴の状態（canUndo / canRedo）を反映する。
 // load / cut / volume / undo / redo の各処理後に共通で呼ぶ。
+// 保存の可否は編集の有無に依存しないため、ここでは扱わない。
 function applyHistoryState(state) {
-  canSave = !!state.hasEdits
   canUndo = !!state.canUndo
   canRedo = !!state.canRedo
   updateEditControls()
@@ -269,7 +271,7 @@ async function openAndLoad() {
 
   const token = ++loadToken
   busy = true
-  canSave = false // 新規読み込み時点では未編集なので保存は無効
+  fileLoaded = false // 読み込みが完了するまでは保存できない
   zoomFactor = 1 // 新しいファイルは全体表示から始める
   statusEl.textContent = '波形を生成中…'
   openFileBtn.disabled = true
@@ -286,7 +288,8 @@ async function openAndLoad() {
 
     transportEl.hidden = false
     editToolsEl.hidden = false
-    applyHistoryState(state) // 読み込み直後は未編集（undo/redo/save すべて無効）
+    fileLoaded = true // 未編集でも形式変換として保存できるので、この時点で保存は有効
+    applyHistoryState(state) // 読み込み直後は未編集（undo/redo は無効）
     setTransportState('stopped')
     clearSelection()
     updateTime()
@@ -490,9 +493,11 @@ async function navigateHistory(direction) {
   }
 }
 
-// 現在の編集結果を、選んだフォーマットでディスクへ書き出す
+// 現在の編集結果を、選んだフォーマットでディスクへ書き出す。
+// 編集が無い場合は形式変換としての保存になり、選んだ出力形式が
+// 元ファイルと同じ（＝書き出す内容に変わりが無い）なら main 側で中断される。
 async function doSave() {
-  if (busy || !canSave) return
+  if (busy || !fileLoaded) return
 
   busy = true
   openFileBtn.disabled = true
@@ -502,11 +507,15 @@ async function doSave() {
 
   try {
     const result = await window.api.exportAudio()
-    if (result) {
-      statusEl.textContent = `保存しました: ${result.path}`
-    } else {
+    if (!result) {
       // 保存ダイアログでキャンセルされた場合は元の表示に戻す
       statusEl.textContent = prevStatus
+    } else if (result.unchanged) {
+      statusEl.textContent = '変更がありません（編集がなく、出力形式も元ファイルと同じです）'
+    } else if (result.converted) {
+      statusEl.textContent = `形式を変換して保存しました: ${result.path}`
+    } else {
+      statusEl.textContent = `保存しました: ${result.path}`
     }
   } catch (err) {
     statusEl.textContent = `保存に失敗しました: ${errorText(err)}`
