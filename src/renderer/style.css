@@ -217,3 +217,162 @@ body {
   text-align: center;
   margin-top: 40px;
 }
+
+/* --- モーダルダイアログ（一括結合の確認・はい/いいえの確認） --- */
+
+.modal-overlay {
+  position: fixed;
+  inset: 0;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: 24px;
+  background: rgba(10, 10, 14, 0.6);
+  z-index: 10;
+}
+
+.modal-overlay[hidden] {
+  display: none;
+}
+
+.modal {
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+  width: 100%;
+  max-width: 640px;
+  max-height: 100%;
+  padding: 20px 22px;
+  background: #26262e;
+  border: 1px solid #3a3a46;
+  border-radius: 10px;
+  box-shadow: 0 12px 32px rgba(0, 0, 0, 0.45);
+}
+
+.modal-narrow {
+  max-width: 420px;
+}
+
+.modal-title {
+  margin: 0;
+  font-size: 16px;
+  font-weight: 600;
+}
+
+.modal-hint {
+  margin: 0;
+  font-size: 12.5px;
+  line-height: 1.6;
+  color: #9a9aa6;
+}
+
+.modal-actions {
+  display: flex;
+  justify-content: flex-end;
+  gap: 10px;
+}
+
+/* ダイアログの主ボタン（結合して保存・はい）を、キャンセル側と見分けられるようにする。
+   .btn-primary は .btn より前に定義されているため、両方付けると .btn の見た目に
+   なってしまう。ダイアログ内だけに絞って上書きする。 */
+.modal-actions .btn-primary {
+  color: #fff;
+  background: #3b82f6;
+  border-color: #3b82f6;
+  font-weight: 600;
+}
+
+.modal-actions .btn-primary:hover:not(:disabled) {
+  background: #2f6fe0;
+}
+
+.modal-actions .btn-primary:disabled {
+  opacity: 0.5;
+}
+
+/* 改行を含むメッセージ（編集内容が破棄される旨の注意など）をそのまま表示する */
+.confirm-message {
+  margin: 0;
+  font-size: 14px;
+  line-height: 1.7;
+  white-space: pre-line;
+}
+
+/* --- 一括結合の並び順一覧 --- */
+
+.concat-list {
+  /* ファイル数が多いときは一覧だけをスクロールさせ、ボタンは常に見えるようにする */
+  overflow-y: auto;
+  max-height: 46vh;
+  margin: 0;
+  padding: 4px;
+  list-style: none;
+  background: #16161b;
+  border: 1px solid #2c2c36;
+  border-radius: 6px;
+}
+
+.concat-row {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 5px 6px;
+  border-radius: 4px;
+}
+
+.concat-row + .concat-row {
+  border-top: 1px solid #24242c;
+}
+
+.concat-order {
+  flex-shrink: 0;
+  min-width: 26px;
+  font-size: 12px;
+  font-variant-numeric: tabular-nums;
+  color: #77778a;
+  text-align: right;
+}
+
+.concat-name {
+  flex: 1;
+  overflow: hidden;
+  font-size: 13px;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.concat-duration {
+  flex-shrink: 0;
+  font-size: 12.5px;
+  font-variant-numeric: tabular-nums;
+  color: #b6b6c2;
+}
+
+.concat-row .btn {
+  flex-shrink: 0;
+  padding: 3px 9px;
+  font-size: 12px;
+}
+
+.concat-summary {
+  margin: 0;
+  font-size: 13px;
+  color: #b6b6c2;
+}
+
+.concat-warning {
+  margin: 0;
+  padding: 8px 10px;
+  font-size: 12.5px;
+  line-height: 1.6;
+  color: #ffcf99;
+  background: rgba(214, 69, 69, 0.12);
+  border: 1px solid #6b3b3b;
+  border-radius: 6px;
+}
+
+.concat-progress {
+  margin: 0;
+  font-size: 12.5px;
+  color: #9a9aa6;
+}

@@ -15,6 +15,7 @@
       <header class="toolbar">
         <button id="open-file-btn" class="btn-primary">ファイルを開く</button>
         <button id="append-file-btn" class="btn" disabled>末尾にファイルを追加</button>
+        <button id="concat-files-btn" class="btn">複数ファイルを結合</button>
         <span id="status" class="status"></span>
       </header>
 
@@ -87,6 +88,46 @@
           「ファイルを開く」から MP3 / WAV / M4A ファイルを選択してください。
         </p>
       </main>
+    </div>
+
+    <!-- 複数ファイルの一括結合：並び順の確認ダイアログ -->
+    <div id="concat-overlay" class="modal-overlay" hidden>
+      <div
+        class="modal"
+        role="dialog"
+        aria-modal="true"
+        aria-labelledby="concat-title"
+      >
+        <h2 id="concat-title" class="modal-title">複数ファイルを結合</h2>
+        <p class="modal-hint">
+          上から順に1本へ結合します。ファイル名の自然順（1 → 2 → 10）で並べています。
+          「↑」「↓」で並べ替え、「除外」で一覧から外せます。
+        </p>
+        <ol id="concat-list" class="concat-list"></ol>
+        <p id="concat-summary" class="concat-summary"></p>
+        <p id="concat-warning" class="concat-warning" hidden></p>
+        <p id="concat-progress" class="concat-progress" hidden></p>
+        <div class="modal-actions">
+          <button id="concat-cancel-btn" class="btn">キャンセル</button>
+          <button id="concat-run-btn" class="btn btn-primary">結合して保存</button>
+        </div>
+      </div>
+    </div>
+
+    <!-- はい／いいえの確認ダイアログ（結合結果を開くか等） -->
+    <div id="confirm-overlay" class="modal-overlay" hidden>
+      <div
+        class="modal modal-narrow"
+        role="dialog"
+        aria-modal="true"
+        aria-labelledby="confirm-message"
+      >
+        <p id="confirm-message" class="confirm-message"></p>
+        <div class="modal-actions">
+          <button id="confirm-no-btn" class="btn">いいえ</button>
+          <button id="confirm-yes-btn" class="btn btn-primary">はい</button>
+        </div>
+      </div>
     </div>
 
     <script type="module" src="./main.js"></script>

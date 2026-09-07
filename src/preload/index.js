@@ -31,8 +31,32 @@ contextBridge.exposeInMainWorld('api', {
 
   // 現在の編集結果を、保存ダイアログで選んだフォーマット/パスへ書き出す。
   // 編集が無くても、入力と違う形式を選べば形式変換として書き出せる。
+  // 出力形式は MP3 / WAV / M4A / MP4（黒画面の動画）から選べる。
   // 返り値: 書き出した場合 { path, converted }（converted=true は形式変換のみの保存）、
   //         編集も形式変換も無く書き出さなかった場合 { unchanged: true }、
   //         キャンセル時 null（失敗時は例外）
-  exportAudio: () => ipcRenderer.invoke('audio:export')
+  exportAudio: () => ipcRenderer.invoke('audio:export'),
+
+  // --- 複数ファイルの一括結合（編集セッションとは独立した機能） ---
+
+  // 結合するファイルの選択ダイアログ（複数選択）を開く
+  // 返り値: string[]（選択されたパス）/ キャンセル時 null
+  openConcatFiles: () => ipcRenderer.invoke('dialog:openConcatFiles'),
+
+  // 結合候補のファイルを自然順に並べ、各ファイルの長さと合計を返す（確認ダイアログ用）
+  // 返り値: { files: [{ path, name, duration }], totalDuration, limit }（失敗時は例外）
+  inspectConcatFiles: (filePaths) => ipcRenderer.invoke('concat:inspect', filePaths),
+
+  // 渡した順番どおりに結合し、保存ダイアログで選んだパス/形式へ書き出す
+  // 返り値: { path, duration, fileCount, video }（video=true は MP4＝入力にはできない）、
+  //         キャンセル時 null（失敗時は例外）
+  runConcat: (filePaths) => ipcRenderer.invoke('concat:run', filePaths),
+
+  // 結合中の進捗（何ファイル目を処理中か）を受け取る。
+  // 返り値: 購読を解除する関数（結合が終わったら呼ぶ）
+  onConcatProgress: (callback) => {
+    const listener = (_event, progress) => callback(progress)
+    ipcRenderer.on('concat:progress', listener)
+    return () => ipcRenderer.removeListener('concat:progress', listener)
+  }
 })

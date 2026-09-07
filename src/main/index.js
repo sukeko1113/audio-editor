@@ -3,6 +3,8 @@ import { join, extname, basename } from 'path'
 import { createReadStream, statSync } from 'fs'
 import { Readable } from 'stream'
 import { EditSession } from './editSession.js'
+import { saveDialogFilters } from './format.js'
+import { concatToFile, inspectFiles } from './batchConcat.js'
 
 // 編集セッション（版履歴とカット処理を管理）。
 // app-audio プロトコルは常に現在の版のファイルを配信する。
@@ -185,21 +187,11 @@ ipcMain.handle('audio:export', async () => {
   const base = basename(originalPath, extname(originalPath)) || 'audio'
   const defaultPath = `${base}${hasEdits ? '-edited' : '-converted'}.${ext}`
 
-  // 元ファイルと同じ形式をデフォルト（先頭）に並べる
-  const allFilters = [
-    { name: 'MP3', extensions: ['mp3'] },
-    { name: 'WAV', extensions: ['wav'] },
-    { name: 'M4A', extensions: ['m4a'] }
-  ]
-  const filters = [
-    ...allFilters.filter((f) => f.extensions[0] === ext),
-    ...allFilters.filter((f) => f.extensions[0] !== ext)
-  ]
-
   const result = await dialog.showSaveDialog({
     title: hasEdits ? '編集した音声を保存' : '音声を保存',
     defaultPath,
-    filters
+    // 元ファイルと同じ形式をデフォルト（先頭）に並べる。MP4（動画）も選べる。
+    filters: saveDialogFilters(ext)
   })
 
   if (result.canceled || !result.filePath) {
@@ -207,6 +199,60 @@ ipcMain.handle('audio:export', async () => {
   }
 
   return session.export(result.filePath)
+})
+
+// 「複数ファイルを結合」用のファイル選択ダイアログ（複数選択）。
+// MP4 は映像を含む書き出し専用の形式なので、入力の候補には出さない。
+ipcMain.handle('dialog:openConcatFiles', async () => {
+  const result = await dialog.showOpenDialog({
+    title: '結合する音声ファイルを選択（複数選択可）',
+    properties: ['openFile', 'multiSelections'],
+    filters: [{ name: '音声ファイル (MP3 / WAV / M4A)', extensions: ['mp3', 'wav', 'm4a'] }]
+  })
+
+  if (result.canceled || result.filePaths.length === 0) {
+    return null
+  }
+  return result.filePaths
+})
+
+// 結合候補のファイルを自然順に並べ、各ファイルの長さと合計を返す（確認ダイアログ用）。
+// まだ何も変換しないため、読めないファイルがあればこの時点で分かる。
+ipcMain.handle('concat:inspect', async (_event, filePaths) => {
+  return inspectFiles(filePaths)
+})
+
+// 一覧の順番どおりに結合し、保存ダイアログで選んだパス・形式へ書き出す。
+// 編集セッション（版履歴）には触れないため、編集中の音声は変化しない。
+// キャンセル時は null、書き出した場合は { path, duration, fileCount, video } を返す。
+// 進捗は 'concat:progress' でレンダラーへ随時送る。
+ipcMain.handle('concat:run', async (event, filePaths) => {
+  if (!Array.isArray(filePaths) || filePaths.length < 2) {
+    throw new Error('結合するには2つ以上のファイルが必要です')
+  }
+
+  // デフォルトのファイル名・出力形式は先頭ファイルに合わせる。
+  // 素材のファイルを上書きしないよう "-concat" を付ける（要件4.5 と同じ考え方）。
+  const first = filePaths[0]
+  const ext = extname(first).replace('.', '').toLowerCase() || 'mp3'
+  const base = basename(first, extname(first)) || 'audio'
+
+  const result = await dialog.showSaveDialog({
+    title: '結合した音声を保存',
+    defaultPath: `${base}-concat.${ext}`,
+    filters: saveDialogFilters(ext)
+  })
+
+  if (result.canceled || !result.filePath) {
+    return null
+  }
+
+  return concatToFile(filePaths, result.filePath, (progress) => {
+    // ウィンドウが閉じたあとに送ると例外になるため、生きている間だけ通知する
+    if (!event.sender.isDestroyed()) {
+      event.sender.send('concat:progress', progress)
+    }
+  })
 })
 
 app.whenReady().then(() => {
