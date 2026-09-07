@@ -6,6 +6,17 @@ directories:
 files:
   - out/**/*
   - package.json
+  # Windows 版のバイナリだけを同梱する。
+  # ffprobe-static は npm パッケージに全プラットフォーム分のバイナリを含むため、
+  # 除外しないと macOS / Linux 用の 230MB 以上が一緒に入ってしまう。
+  - '!node_modules/ffprobe-static/bin/darwin/**'
+  - '!node_modules/ffprobe-static/bin/linux/**'
+  # ffmpeg-static は npm install を実行した OS のバイナリを置く。Linux 上で
+  # Windows 版をビルドすると Linux 用(拡張子なし)と Windows 用(.exe)の両方が
+  # 残るため、拡張子なしのほうを除外する。
+  - '!node_modules/ffmpeg-static/ffmpeg'
+  - '!node_modules/ffmpeg-static/ffmpeg.LICENSE'
+  - '!node_modules/ffmpeg-static/ffmpeg.README'
 # ffmpeg / ffprobe バイナリは asar 内から実行できないため展開する
 asarUnpack:
   - node_modules/ffmpeg-static/**

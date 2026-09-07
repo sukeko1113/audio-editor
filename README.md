@@ -215,6 +215,70 @@ npm run dev
 | `npm start` | ビルド済みのアプリをプレビュー起動 |
 | `npm run build:win` | Windows 用インストーラー（NSIS `.exe`）を `dist/` に生成 |
 
+## Windows インストーラーのビルド
+
+```bat
+npm run build:win
+```
+
+`release/` に NSIS インストーラー（`AudioEditor Setup <version>.exe`）が生成されます。
+**Windows 上でビルドする場合は、これだけで完結します。**
+
+### Linux 上でクロスビルドする場合の注意
+
+CI やコンテナなど Linux から Windows 版を作る場合、そのままでは**動かないインストーラー**が
+出来上がります。以下の2点が必要です。
+
+**1. Windows 用の ffmpeg バイナリを取り直す（必須）**
+
+`ffmpeg-static` は `npm install` を実行した OS 向けのバイナリだけをダウンロードします。
+Linux でインストールしたまま Windows 版をビルドすると、**Linux の ELF バイナリが同梱され、
+Windows 上では波形生成・カット・保存・結合のすべてが失敗します**（インストール自体は成功し、
+起動もするため気づきにくい）。
+
+```bash
+cd node_modules/ffmpeg-static
+npm_config_platform=win32 npm_config_arch=x64 node install.js   # ffmpeg.exe を取得
+cd ../..
+```
+
+`file node_modules/ffmpeg-static/ffmpeg.exe` が `PE32+ executable ... x86-64` になっていれば
+正しい状態です。ローカルでアプリを動かすときは、Linux 用のバイナリ（拡張子なしの `ffmpeg`）が
+同じディレクトリに残っているのでそのまま使えます。
+
+**2. wine（32bit）を用意する**
+
+electron-builder は実行ファイルのバージョン情報を書き込む `rcedit` と、NSIS の
+アンインストーラー生成のために Windows の実行ファイルを動かします。どちらも **32bit の
+PE バイナリ**なので、`wine64` だけでは足りません（`wine: could not exec the wine loader` や
+`failed to load ntdll.dll` で失敗します）。
+
+```bash
+dpkg --add-architecture i386
+apt-get update
+apt-get install -y --no-install-recommends libgd3:i386 wine32
+
+# wine32 パッケージは /usr/bin にランチャーを置かない。wine は argv[0] の位置から
+# ライブラリを探すため、シンボリックリンクではなく exec するラッパーを作る
+printf '#!/bin/sh\nexec /usr/lib/wine/wine "$@"\n' > /usr/bin/wine && chmod +x /usr/bin/wine
+
+# 32bit 専用のプレフィックスを用意する
+export WINEARCH=win32 WINEPREFIX=~/.wine32 WINEDEBUG=-all
+wine wineboot --init
+```
+
+> `libgd3:i386` を先に入れているのは、`wine32` が依存する `libgphoto2` の i386 版が
+> これを要求し、素直に `apt-get install wine32` すると依存解決に失敗するためです。
+
+### 同梱サイズについて
+
+`ffprobe-static` は npm パッケージに全プラットフォーム分のバイナリを含んでいます。
+`electron-builder.yml` の `files` で macOS / Linux 用を除外しているため、Windows 版には
+`bin/win32` だけが入ります。除外前は `win-unpacked` が 672MB でしたが、除外後は 443MB です。
+
+さらに絞るなら `bin/win32/ia32` も除外できます（x64 のみをターゲットにしているため実行時には
+使われません。約 50MB）。将来 32bit 版を作る可能性を残して、いまは同梱したままにしています。
+
 ## プロジェクト構成
 
 ```
