@@ -6,7 +6,14 @@ import { ffmpegPath } from './binaries.js'
 import { generatePeaks, probeDuration } from './peaks.js'
 import { probeAudioStream, needsNormalization, normalizeToPcmWav } from './normalize.js'
 import { convertToPcmWav, concatPcmWavs } from './concat.js'
-import { outputFormatFor, encodeToFormat, isSameFormat, isVideoOutputPath } from './format.js'
+import {
+  outputFormatFor,
+  encodeToFormat,
+  isSameFormat,
+  isVideoOutputPath,
+  isSupportedInputPath,
+  INPUT_FORMATS_LABEL
+} from './format.js'
 import { MAX_DURATION, formatDurationJa } from './duration.js'
 
 // 編集対象の範囲どうしを正規化（0〜duration にクランプ・ソート・重なり/隣接をマージ）する。
@@ -31,9 +38,6 @@ function mergeIntervals(intervals, duration) {
   }
   return merged
 }
-
-// 末尾へ追加できる入力形式（読み込みと同じ MP3 / WAV / M4A）
-const APPENDABLE_EXTENSIONS = new Set(['.mp3', '.wav', '.m4a'])
 
 // 現在の編集対象を、変換せずそのまま concat の入力にできるか。
 // 連結パラメータは現在の編集対象から取っているため、あとは中身が
@@ -164,7 +168,9 @@ export class EditSession {
     // ファイル選択ダイアログでは絞り込んでいるが、「すべてのファイル」から
     // 選べてしまうため、ここでも弾いて分かりやすいエラーにする。
     if (isVideoOutputPath(filePath)) {
-      throw new Error('MP4 は書き出し専用の形式です（MP3 / WAV / M4A を選択してください）')
+      throw new Error(
+        `MP4 は書き出し専用の形式です（${INPUT_FORMATS_LABEL} を選択してください）`
+      )
     }
 
     this.reset()
@@ -319,16 +325,16 @@ export class EditSession {
    *
    * 連結後の長さが上限（要件5.1 の3時間）を超える場合は、変換を始める前に中断する。
    *
-   * @param {string} filePath 末尾に追加する音声ファイル（MP3 / WAV / M4A）
+   * @param {string} filePath 末尾に追加する音声ファイル（format.js の入力形式）
    */
   async append(filePath) {
     const cur = this.current()
     if (!cur) throw new Error('音声が読み込まれていません')
 
-    const ext = extname(filePath || '').toLowerCase()
-    if (!APPENDABLE_EXTENSIONS.has(ext)) {
+    if (!isSupportedInputPath(filePath)) {
+      const ext = extname(filePath || '').toLowerCase()
       throw new Error(
-        `対応していない形式です: ${ext || '(拡張子なし)'}（MP3 / WAV / M4A を選択してください）`
+        `対応していない形式です: ${ext || '(拡張子なし)'}（${INPUT_FORMATS_LABEL} を選択してください）`
       )
     }
 

@@ -4,7 +4,8 @@ import { ffmpegPath } from './binaries.js'
 import { probeDuration } from './peaks.js'
 
 /**
- * 出力形式（コンテナ／コーデック）の定義・入力ファイルとの同一判定・書き出し。
+ * このアプリが扱う音声形式の定義：入力として受け付ける形式、出力形式
+ * （コンテナ／コーデック）、入力ファイルとの同一判定、そして書き出し。
  *
  * 「編集なしでの保存」は、選ばれた出力形式が入力ファイルと同じなら書き出す
  * 意味がなく、違うなら形式変換として書き出したい。この判定を拡張子で行うと
@@ -15,7 +16,44 @@ import { probeDuration } from './peaks.js'
  * 「変換したはずが同じ形式だった」「判定は通ったが書き出しが違う形式だった」
  * といった食い違いになるため。書き出し（encodeToFormat）もここに置き、
  * カット後の書き出しと一括結合の書き出しが同じ引数を使うようにしている。
+ *
+ * 入力形式もここに置く。ファイル選択ダイアログ（開く／末尾に追加／一括結合）と
+ * 受け入れ判定が別々に一覧を持つと、対応形式を増やしたときに直し漏れるため。
  */
+
+/**
+ * 入力として受け付ける拡張子。
+ *
+ * 出力形式と違い、入力はコーデックの定義を持たない。ffmpeg がデコードできれば
+ * よく、ブラウザがそのまま再生できない形式（WMA・ADPCM の WAV など）は
+ * 読み込み時に normalize.js が 16bit PCM WAV へ変換するため。
+ *
+ * WMA は入力専用。ffmpeg-static には wmav1 / wmav2 のエンコーダも含まれるが、
+ * レガシー形式で新規に書き出す用途がないため出力形式には入れていない。
+ */
+const INPUT_EXTENSIONS = ['.mp3', '.wav', '.m4a', '.wma']
+
+// エラーメッセージやダイアログの表示に使う「MP3 / WAV / M4A / WMA」。
+// 対応形式を増やしたときに文言も一緒に変わるよう、一覧から組み立てる。
+export const INPUT_FORMATS_LABEL = INPUT_EXTENSIONS.map((e) => e.slice(1).toUpperCase()).join(' / ')
+
+/**
+ * ファイル選択ダイアログ（開く／末尾に追加／一括結合）用のフィルタ。
+ * MP4 は映像を含む書き出し専用の形式なので、ここには出さない。
+ */
+export function inputDialogFilters() {
+  return [
+    {
+      name: `音声ファイル (${INPUT_FORMATS_LABEL})`,
+      extensions: INPUT_EXTENSIONS.map((e) => e.slice(1))
+    }
+  ]
+}
+
+// 指定パスの拡張子が入力として受け付ける形式か。
+export function isSupportedInputPath(filePath) {
+  return INPUT_EXTENSIONS.includes(extname(filePath || '').toLowerCase())
+}
 
 // 映像トラック（MP4）の設定。
 // YouTube は音声のみの MP4 を受け付けないため、音声の長さぶん黒一色の静止画を
@@ -112,6 +150,18 @@ export function outputFormatFor(outPath) {
 export function isVideoOutputPath(filePath) {
   const format = OUTPUT_FORMATS[extname(filePath || '').toLowerCase()]
   return !!(format && format.video)
+}
+
+/**
+ * 保存ダイアログのデフォルトに使う拡張子を返す。
+ *
+ * 通常は元ファイルと同じ形式にしたいが、入力にしか対応していない形式
+ * （WMA）を開いている場合、その拡張子はそのまま出力できない。
+ * 出力できない形式のときは MP3（もっとも一般的な出力形式）へ寄せる。
+ */
+export function defaultOutputExtension(preferredExt) {
+  const ext = String(preferredExt || '').replace('.', '').toLowerCase()
+  return OUTPUT_FORMATS[`.${ext}`] ? ext : 'mp3'
 }
 
 /**

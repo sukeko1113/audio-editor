@@ -1,10 +1,16 @@
-import { basename, extname, join, resolve } from 'path'
+import { basename, join, resolve } from 'path'
 import { mkdtempSync, rmSync } from 'fs'
 import { tmpdir } from 'os'
 import { probeDuration } from './peaks.js'
 import { probeAudioStream } from './normalize.js'
 import { convertToPcmWav, concatPcmWavs } from './concat.js'
-import { outputFormatFor, encodeToFormat, isSameFormat } from './format.js'
+import {
+  outputFormatFor,
+  encodeToFormat,
+  isSameFormat,
+  isSupportedInputPath,
+  INPUT_FORMATS_LABEL
+} from './format.js'
 import { MAX_DURATION, formatDurationJa } from './duration.js'
 
 /**
@@ -22,10 +28,6 @@ import { MAX_DURATION, formatDurationJa } from './duration.js'
  *
  * 中間ファイルは結合専用の一時ディレクトリにまとめ、成功時・失敗時とも削除する。
  */
-
-// 入力として受け付ける形式（読み込み・末尾への追加と同じ MP3 / WAV / M4A）。
-// MP4 は映像を含む書き出し専用の形式なので入力にはできない。
-const INPUT_EXTENSIONS = new Set(['.mp3', '.wav', '.m4a'])
 
 // 連結の中間ファイル（concat demuxer の入力・出力）の中身。
 // 出力形式がこれと同じなら、連結結果をそのまま出力先に書き出せる。
@@ -97,12 +99,13 @@ function fileError(filePath, action, err) {
   return new Error(`「${basename(filePath)}」の${action}に失敗しました: ${detail}`)
 }
 
+// 受け付ける入力形式は format.js の定義に従う（読み込み・末尾への追加と同じ）。
+// MP4 は映像を含む書き出し専用の形式なので入力にはできない。
 function assertSupportedInput(filePath) {
-  const ext = extname(filePath || '').toLowerCase()
-  if (!INPUT_EXTENSIONS.has(ext)) {
+  if (!isSupportedInputPath(filePath)) {
     throw new Error(
       `対応していない形式です: ${basename(filePath) || '(名前なし)'}` +
-        `（MP3 / WAV / M4A を選択してください）`
+        `（${INPUT_FORMATS_LABEL} を選択してください）`
     )
   }
 }
