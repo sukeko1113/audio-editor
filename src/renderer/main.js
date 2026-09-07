@@ -3,6 +3,7 @@ import RegionsPlugin from 'wavesurfer.js/dist/plugins/regions.esm.js'
 
 const openFileBtn = document.getElementById('open-file-btn')
 const appendFileBtn = document.getElementById('append-file-btn')
+const concatFilesBtn = document.getElementById('concat-files-btn')
 const statusEl = document.getElementById('status')
 const placeholderEl = document.getElementById('placeholder')
 const waveformEl = document.getElementById('waveform')
@@ -30,6 +31,21 @@ const zoomInBtn = document.getElementById('zoom-in-btn')
 const zoomSlider = document.getElementById('zoom-slider')
 const zoomValueEl = document.getElementById('zoom-value')
 
+// 一括結合の確認ダイアログ
+const concatOverlayEl = document.getElementById('concat-overlay')
+const concatListEl = document.getElementById('concat-list')
+const concatSummaryEl = document.getElementById('concat-summary')
+const concatWarningEl = document.getElementById('concat-warning')
+const concatProgressEl = document.getElementById('concat-progress')
+const concatCancelBtn = document.getElementById('concat-cancel-btn')
+const concatRunBtn = document.getElementById('concat-run-btn')
+
+// はい／いいえの確認ダイアログ
+const confirmOverlayEl = document.getElementById('confirm-overlay')
+const confirmMessageEl = document.getElementById('confirm-message')
+const confirmYesBtn = document.getElementById('confirm-yes-btn')
+const confirmNoBtn = document.getElementById('confirm-no-btn')
+
 const REGION_COLOR = 'rgba(91, 141, 239, 0.22)'
 const REGION_COLOR_SELECTED = 'rgba(255, 176, 60, 0.42)'
 
@@ -41,6 +57,11 @@ let busy = false // カット処理中などの多重操作を防ぐ
 let fileLoaded = false // 音声が読み込まれているか（保存は編集の有無に関わらず常に可能）
 let canUndo = false // 1つ前の版に戻せるか
 let canRedo = false // 1つ先の版に進めるか
+
+// 一括結合の確認ダイアログの状態。編集セッション（版履歴）とは独立している。
+let concatItems = [] // [{ path, name, duration }] ダイアログに表示中の並び順
+let concatLimit = 3 * 60 * 60 // 合計時間の上限(秒)。main から受け取った値で上書きする。
+let concatRunning = false // 結合の実行中（並べ替え・除外・キャンセルを止める）
 
 // 水平ズーム倍率。1 = 音声全体が1画面に収まる初期表示（＝ズーム下限）。
 // 表示のみの状態で音声データには影響しない。カット/音量調整/アンドゥ等の
@@ -70,6 +91,16 @@ function formatTime(seconds) {
   const s = Math.floor(seconds % 60)
   const d = Math.floor((seconds * 10) % 10)
   return `${m}:${String(s).padStart(2, '0')}.${d}`
+}
+
+// 秒を「1時間23分45秒」形式に整形（一覧の合計時間・結合結果の長さの表示用）。
+// formatTime は m:ss.d 形式で、3時間ぶんだと「180:00.0」となり読みにくいため使い分ける。
+function formatDurationJa(seconds) {
+  const total = Math.max(0, Math.round(seconds))
+  const h = Math.floor(total / 3600)
+  const m = Math.floor((total % 3600) / 60)
+  const s = total % 60
+  return h > 0 ? `${h}時間${m}分${s}秒` : `${m}分${s}秒`
 }
 
 function updateTime() {
@@ -105,6 +136,8 @@ function updateEditControls() {
   volumeDoubleBtn.disabled = !audioReady
   volumeMuteBtn.disabled = !audioReady
   appendFileBtn.disabled = !audioReady
+  // 一括結合はファイルが開かれていなくても使えるので、処理中かどうかだけで決める
+  concatFilesBtn.disabled = busy
   // アンドゥ/リドゥは戻せる/進める版があるときのみ有効
   undoBtn.disabled = busy || !canUndo
   redoBtn.disabled = busy || !canRedo
@@ -268,7 +301,12 @@ async function openAndLoad() {
   if (busy) return
   const filePath = await window.api.openAudioFile()
   if (!filePath) return
+  await loadFile(filePath)
+}
 
+// 指定パスの音声を読み込み、波形を描画して編集できる状態にする。
+// 「ファイルを開く」と「結合結果を開く」で共用する（どちらも版履歴は作り直しになる）。
+async function loadFile(filePath) {
   const token = ++loadToken
   busy = true
   fileLoaded = false // 読み込みが完了するまでは保存できない
@@ -526,8 +564,279 @@ async function doSave() {
   }
 }
 
+// ---- 複数ファイルの一括結合 ----
+// 編集セッション（版履歴）とは独立した機能。選んだファイルを一覧の順番どおりに
+// 1本へ結合して保存するだけで、編集中の音声・履歴には影響しない。
+
+// 一覧の合計時間(秒)
+function concatTotalDuration() {
+  return concatItems.reduce((sum, item) => sum + item.duration, 0)
+}
+
+// 結合を実行できる状態か（2ファイル以上あり、合計が上限以内）。
+// 警告表示と実行ボタンの活性、実行時のガードで同じ判定を使う。
+function canRunConcat() {
+  return concatItems.length >= 2 && concatTotalDuration() <= concatLimit
+}
+
+// 確認ダイアログの中身（並び順・合計・警告・ボタンの活性）を作り直す。
+// 並べ替え・除外のたびに呼ぶ。
+function renderConcatList() {
+  concatListEl.textContent = '' // 既存の行をすべて捨ててから作り直す
+  concatItems.forEach((item, index) => {
+    concatListEl.appendChild(createConcatRow(item, index))
+  })
+  updateConcatSummary()
+}
+
+// 一覧の1行。ファイル名は textContent で入れるため、名前に含まれる記号が
+// HTML として解釈されることはない。
+function createConcatRow(item, index) {
+  const row = document.createElement('li')
+  row.className = 'concat-row'
+
+  const order = document.createElement('span')
+  order.className = 'concat-order'
+  order.textContent = `${index + 1}.`
+
+  const name = document.createElement('span')
+  name.className = 'concat-name'
+  name.textContent = item.name
+  name.title = item.path // 同名ファイルの区別用にフルパスをツールチップで見せる
+
+  const duration = document.createElement('span')
+  duration.className = 'concat-duration'
+  duration.textContent = `${item.duration.toFixed(1)} 秒`
+
+  row.append(
+    order,
+    name,
+    duration,
+    createConcatRowButton('↑', '1つ上へ移動', index === 0, () => moveConcatItem(index, -1)),
+    createConcatRowButton('↓', '1つ下へ移動', index === concatItems.length - 1, () =>
+      moveConcatItem(index, 1)
+    ),
+    createConcatRowButton('除外', 'この一覧から外す', false, () => removeConcatItem(index))
+  )
+  return row
+}
+
+function createConcatRowButton(label, title, disabled, onClick) {
+  const button = document.createElement('button')
+  button.type = 'button'
+  button.className = 'btn'
+  button.textContent = label
+  button.title = title
+  button.disabled = disabled || concatRunning // 処理中は並べ替え・除外させない
+  button.addEventListener('click', onClick)
+  return button
+}
+
+// 行を1つ上/下へ入れ替える（direction: -1 = 上、+1 = 下）
+function moveConcatItem(index, direction) {
+  const target = index + direction
+  if (concatRunning || target < 0 || target >= concatItems.length) return
+  const moved = concatItems[index]
+  concatItems[index] = concatItems[target]
+  concatItems[target] = moved
+  renderConcatList()
+}
+
+function removeConcatItem(index) {
+  if (concatRunning) return
+  concatItems.splice(index, 1)
+  renderConcatList()
+}
+
+// 合計時間・警告・ボタンの活性を、現在の一覧に合わせて更新する
+function updateConcatSummary() {
+  const total = concatTotalDuration()
+  concatSummaryEl.textContent =
+    `合計 ${concatItems.length} ファイル / ` +
+    `${total.toFixed(1)} 秒（${formatDurationJa(total)}）`
+
+  // 2ファイル未満・上限超過はどちらも結合できない。理由を出して実行を止める。
+  let warning = ''
+  if (concatItems.length < 2) {
+    warning = '結合するには2つ以上のファイルが必要です。'
+  } else if (total > concatLimit) {
+    // 上限の呼び方は main 側のエラーメッセージ（「上限の3時間」）に合わせる。
+    // 判定そのものは main から受け取った concatLimit で行う。
+    warning =
+      `合計が上限の3時間を超えています（${formatDurationJa(total)}）。` +
+      'ファイルを除外して合計を減らしてください。'
+  }
+  concatWarningEl.textContent = warning
+  concatWarningEl.hidden = warning === ''
+
+  concatRunBtn.disabled = concatRunning || !canRunConcat()
+  concatCancelBtn.disabled = concatRunning // 結合は途中で止められないので閉じさせない
+}
+
+function setConcatProgress(text) {
+  concatProgressEl.textContent = text
+  concatProgressEl.hidden = !text
+}
+
+// main から届く進捗を、ダイアログに出す1行の文言にする
+function concatProgressText(progress) {
+  if (!progress) return ''
+  switch (progress.phase) {
+    case 'probe':
+      return 'ファイルを確認中…'
+    case 'convert':
+      return `変換中… (${progress.current}/${progress.total}) ${progress.name}`
+    case 'concat':
+      return `結合中…（${progress.total} ファイル）`
+    case 'encode':
+      return `出力形式へ変換して書き出し中…（${progress.name}）`
+    default:
+      return '処理中…'
+  }
+}
+
+// 確認ダイアログの開閉。開いている間は busy 扱いにして、背後の編集操作を止める。
+function openConcatDialog() {
+  concatRunning = false
+  setConcatProgress('')
+  concatOverlayEl.hidden = false
+  busy = true
+  openFileBtn.disabled = true
+  renderConcatList()
+  updateEditControls()
+  concatRunBtn.focus()
+}
+
+function closeConcatDialog() {
+  if (concatOverlayEl.hidden) return
+  concatOverlayEl.hidden = true
+  concatItems = []
+  setConcatProgress('')
+  busy = false
+  openFileBtn.disabled = false
+  updateEditControls()
+}
+
+// ツールバーの「複数ファイルを結合」。ファイルを選ばせ、長さを調べて確認ダイアログを出す。
+async function startConcat() {
+  if (busy) return
+  const filePaths = await window.api.openConcatFiles()
+  if (!filePaths) return
+  if (filePaths.length < 2) {
+    statusEl.textContent = '結合するには2つ以上のファイルを選択してください'
+    return
+  }
+
+  busy = true
+  openFileBtn.disabled = true
+  statusEl.textContent = 'ファイルの情報を確認中…'
+  updateEditControls()
+
+  let info = null
+  try {
+    // 自然順ソートと各ファイルの長さ取得は main 側（ffprobe）で行う。
+    // 読めないファイルがあれば、どのファイルかが分かるエラーになる。
+    info = await window.api.inspectConcatFiles(filePaths)
+  } catch (err) {
+    statusEl.textContent = `ファイルを読み取れませんでした: ${errorText(err)}`
+  }
+
+  if (!info) {
+    busy = false
+    openFileBtn.disabled = false
+    updateEditControls()
+    return
+  }
+
+  statusEl.textContent = ''
+  concatItems = info.files
+  concatLimit = info.limit
+  openConcatDialog() // busy と「ファイルを開く」の抑止はダイアログを閉じるまで続く
+}
+
+// 「結合して保存」。保存先の選択から書き出しまでを main に任せ、進捗を表示する。
+async function runConcat() {
+  if (concatRunning || !canRunConcat()) return
+
+  concatRunning = true
+  renderConcatList() // 並べ替え・除外・実行ボタンを無効化する
+  setConcatProgress('保存先を選択してください…')
+  const stopProgress = window.api.onConcatProgress((progress) => {
+    setConcatProgress(concatProgressText(progress))
+  })
+
+  let result = null
+  try {
+    result = await window.api.runConcat(concatItems.map((item) => item.path))
+    if (!result) setConcatProgress('保存がキャンセルされました')
+  } catch (err) {
+    // どのファイルで失敗したかは main 側のメッセージに含まれる
+    setConcatProgress(`結合に失敗しました: ${errorText(err)}`)
+  } finally {
+    stopProgress()
+    concatRunning = false
+    renderConcatList() // 失敗・キャンセル時はそのまま並べ替えてやり直せる
+  }
+  if (!result) return
+
+  closeConcatDialog()
+  statusEl.textContent =
+    `${result.fileCount} ファイルを結合して保存しました` +
+    `（長さ: ${formatDurationJa(result.duration)}）: ${result.path}`
+
+  // MP4 は映像を含む書き出し専用の形式なので、編集対象としては読み込めない
+  if (result.video) return
+
+  const message = fileLoaded
+    ? '結合したファイルを開きますか？\n現在編集中の内容は破棄されます。'
+    : '結合したファイルを開きますか？'
+  if (await confirmDialog(message)) {
+    await loadFile(result.path)
+  }
+}
+
+// ---- はい／いいえの確認ダイアログ ----
+// 押されるまで待って boolean を返す。開いている間は busy 扱いにする。
+let confirmResolve = null
+
+function confirmDialog(message) {
+  confirmMessageEl.textContent = message
+  confirmOverlayEl.hidden = false
+  busy = true
+  openFileBtn.disabled = true
+  updateEditControls()
+  confirmYesBtn.focus()
+  return new Promise((resolve) => {
+    confirmResolve = resolve
+  })
+}
+
+function closeConfirmDialog(answer) {
+  if (!confirmResolve) return
+  confirmOverlayEl.hidden = true
+  busy = false
+  openFileBtn.disabled = false
+  updateEditControls()
+  const resolve = confirmResolve
+  confirmResolve = null
+  resolve(answer)
+}
+
+// モーダルを開いている間は、背後の編集ショートカットを効かせない
+function isModalOpen() {
+  return !concatOverlayEl.hidden || !confirmOverlayEl.hidden
+}
+
 openFileBtn.addEventListener('click', openAndLoad)
 appendFileBtn.addEventListener('click', doAppend)
+concatFilesBtn.addEventListener('click', startConcat)
+
+concatRunBtn.addEventListener('click', runConcat)
+concatCancelBtn.addEventListener('click', () => {
+  if (!concatRunning) closeConcatDialog()
+})
+confirmYesBtn.addEventListener('click', () => closeConfirmDialog(true))
+confirmNoBtn.addEventListener('click', () => closeConfirmDialog(false))
 
 playBtn.addEventListener('click', () => wavesurfer && wavesurfer.play())
 pauseBtn.addEventListener('click', () => wavesurfer && wavesurfer.pause())
@@ -589,6 +898,20 @@ function isTypingInField() {
 }
 
 document.addEventListener('keydown', (e) => {
+  // モーダル表示中は Esc（キャンセル／いいえ）だけを扱い、
+  // 背後の編集ショートカットは動かさない
+  if (isModalOpen()) {
+    if (e.key === 'Escape') {
+      e.preventDefault()
+      if (!confirmOverlayEl.hidden) {
+        closeConfirmDialog(false)
+      } else if (!concatRunning) {
+        closeConcatDialog()
+      }
+    }
+    return
+  }
+
   // 入力欄にフォーカスがある間は、キー操作を欄の編集（数値入力・IME 等）に委ねる
   if (isTypingInField()) return
 

@@ -6,7 +6,8 @@ import { ffmpegPath } from './binaries.js'
 import { generatePeaks, probeDuration } from './peaks.js'
 import { probeAudioStream, needsNormalization, normalizeToPcmWav } from './normalize.js'
 import { convertToPcmWav, concatPcmWavs } from './concat.js'
-import { outputFormatFor, codecArgsFor, isSameFormat } from './format.js'
+import { outputFormatFor, encodeToFormat, isSameFormat, isVideoOutputPath } from './format.js'
+import { MAX_DURATION, formatDurationJa } from './duration.js'
 
 // 編集対象の範囲どうしを正規化（0〜duration にクランプ・ソート・重なり/隣接をマージ）する。
 // カット・音量調整で共用する。
@@ -33,19 +34,6 @@ function mergeIntervals(intervals, duration) {
 
 // 末尾へ追加できる入力形式（読み込みと同じ MP3 / WAV / M4A）
 const APPENDABLE_EXTENSIONS = new Set(['.mp3', '.wav', '.m4a'])
-
-// 連結後の長さの上限（要件5.1 の「最長3時間程度」）。
-// これを超える連結は、時間のかかる変換を始める前に中断する。
-const MAX_APPEND_DURATION = 3 * 60 * 60
-
-// エラー表示用に秒を「2時間55分3秒」の形へ整形する
-function formatDurationJa(seconds) {
-  const total = Math.max(0, Math.round(seconds))
-  const h = Math.floor(total / 3600)
-  const m = Math.floor((total % 3600) / 60)
-  const s = total % 60
-  return h > 0 ? `${h}時間${m}分${s}秒` : `${m}分${s}秒`
-}
 
 // 現在の編集対象を、変換せずそのまま concat の入力にできるか。
 // 連結パラメータは現在の編集対象から取っているため、あとは中身が
@@ -172,6 +160,13 @@ export class EditSession {
    * 次の load / 終了時の reset() でまとめて破棄される。
    */
   async load(filePath) {
+    // MP4 は映像トラックを足して書き出すための形式で、読み込みには対応しない。
+    // ファイル選択ダイアログでは絞り込んでいるが、「すべてのファイル」から
+    // 選べてしまうため、ここでも弾いて分かりやすいエラーにする。
+    if (isVideoOutputPath(filePath)) {
+      throw new Error('MP4 は書き出し専用の形式です（MP3 / WAV / M4A を選択してください）')
+    }
+
     this.reset()
     this.originalPath = filePath
 
@@ -345,7 +340,7 @@ export class EditSession {
     // 数十ミリ秒ずれうるが（MP3 のパディング等）、上限判定にはこの精度で足りる。
     const addDuration = await probeDuration(filePath)
     const totalDuration = cur.duration + addDuration
-    if (totalDuration > MAX_APPEND_DURATION) {
+    if (totalDuration > MAX_DURATION) {
       // ステータス表示は1行なので、内訳は記号でコンパクトに示す
       throw new Error(
         `連結後が上限の3時間を超えるため追加できません` +
@@ -461,36 +456,9 @@ export class EditSession {
       }
     }
 
-    await this.runFfmpegExport(cur.path, outPath)
+    // 書き出しは format.js が担当する（MP4 は黒一色の映像トラックを足して書き出す）
+    await encodeToFormat(cur.path, outPath)
     return { path: outPath, converted: conversionOnly }
-  }
-
-  // ffmpeg で入力ファイルを指定フォーマットへ変換して書き出す。
-  // カット処理と同様、ディスク上のファイルをストリーム処理する。
-  runFfmpegExport(inputPath, outPath) {
-    return new Promise((resolve, reject) => {
-      const args = [
-        '-v', 'error',
-        '-nostdin',
-        '-i', inputPath,
-        '-map', '0:a',
-        ...codecArgsFor(outPath),
-        '-y',
-        outPath
-      ]
-
-      const proc = spawn(ffmpegPath, args)
-      let err = ''
-      proc.stderr.on('data', (d) => { err += d.toString() })
-      proc.on('error', reject)
-      proc.on('close', (code) => {
-        if (code !== 0) {
-          reject(new Error(`ffmpeg export failed (code ${code}): ${err.trim()}`))
-          return
-        }
-        resolve()
-      })
-    })
   }
 
   // 現在位置より後ろ（redo 対象）の版と、その一時ファイルを破棄する

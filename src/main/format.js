@@ -1,22 +1,98 @@
+import { spawn } from 'child_process'
 import { extname } from 'path'
+import { ffmpegPath } from './binaries.js'
+import { probeDuration } from './peaks.js'
 
 /**
- * 出力形式（コンテナ／コーデック）の定義と、入力ファイルとの同一判定。
+ * 出力形式（コンテナ／コーデック）の定義・入力ファイルとの同一判定・書き出し。
  *
  * 「編集なしでの保存」は、選ばれた出力形式が入力ファイルと同じなら書き出す
  * 意味がなく、違うなら形式変換として書き出したい。この判定を拡張子で行うと
  * 「ADPCM の .wav を 16bit PCM の .wav として保存する」ようなケースを
  * 取りこぼすため、ffprobe が返すコンテナ名（format_name）とコーデック名で比べる。
+ *
+ * 定義・判定・書き出しを1つのモジュールにまとめているのは、これらがずれると
+ * 「変換したはずが同じ形式だった」「判定は通ったが書き出しが違う形式だった」
+ * といった食い違いになるため。書き出し（encodeToFormat）もここに置き、
+ * カット後の書き出しと一括結合の書き出しが同じ引数を使うようにしている。
  */
+
+// 映像トラック（MP4）の設定。
+// YouTube は音声のみの MP4 を受け付けないため、音声の長さぶん黒一色の静止画を
+// 敷いた動画として書き出す。
+//
+// フレームレートは 5fps。静止画なのでこれで足りる。3時間の音声で実測すると、
+// 書き出し時間はほぼ AAC（音声）のエンコードで決まり、映像側を上げるとそこが
+// 律速に変わる（4コアの環境で計測）：
+//   音声のみ（AAC 192k）  247 秒  ← どの形式でも避けられない下限
+//   MP4  5fps            294 秒 / 253MB
+//   MP4 15fps            419 秒 / 272MB  ← 映像側が律速になり +2分
+// 下限が 247 秒なので 1fps まで落としても 5fps から大きくは縮まらない。
+// それより、極端に低いフレームレートを避けて一般的な値にしておく。
+const VIDEO_SIZE = '1280x720'
+const VIDEO_FPS = 5
+// キーフレーム間隔は約2秒。YouTube の推奨（GOP 長 2秒以下）に合わせる。
+const VIDEO_GOP = VIDEO_FPS * 2
+
+/**
+ * 黒一色の映像を生成する仮想入力（lavfi）。
+ *
+ * color フィルタは止めない限り無限にフレームを作り続けるため、音声の長さ(秒)を
+ * -t で与えて終端する。-shortest に任せる方法は試したが、多重化バッファのぶん
+ * 映像が先に進み、音声より1〜2秒長い出力になった。-fflags +shortest を足すと
+ * 今度は音声の末尾が数百ミリ秒切り落とされてしまう（実測）。
+ * 長さを明示すれば、映像は音声を1フレーム以内で覆う長さに収まる。
+ */
+function videoInputArgs(duration) {
+  return ['-f', 'lavfi', '-t', duration.toFixed(3), '-i', `color=c=black:s=${VIDEO_SIZE}:r=${VIDEO_FPS}`]
+}
+
+// H.264 / yuv420p。YouTube が推奨する組み合わせで、静止画向けの
+// チューニング（stillimage）と軽いプリセットで長尺でも短時間で終わる。
+const VIDEO_ARGS = [
+  '-c:v', 'libx264',
+  '-preset', 'veryfast',
+  '-tune', 'stillimage',
+  '-profile:v', 'high',
+  '-pix_fmt', 'yuv420p',
+  '-crf', '28',
+  '-g', String(VIDEO_GOP)
+]
 
 // 拡張子 → 出力形式。ffmpeg へ渡すコーデック引数と、書き出した結果の
 // コンテナ／コーデック（＝ffprobe が返す名前）を1か所にまとめている。
 // 書き出しと判定で別々に定義を持つと、両者がずれたときに誤判定になるため。
 //   wav → pcm_s16le（16bit PCM） / mp3 → libmp3lame（192kbps） / m4a → aac（192kbps）
+//   mp4 → 黒一色の H.264 映像 ＋ aac（192kbps）。映像を含むため書き出し専用。
+// 並び順は保存ダイアログのフィルタの並びにもなる。
 const OUTPUT_FORMATS = {
-  '.wav': { container: 'wav', codec: 'pcm_s16le', args: ['-c:a', 'pcm_s16le'] },
-  '.mp3': { container: 'mp3', codec: 'mp3', args: ['-c:a', 'libmp3lame', '-b:a', '192k'] },
-  '.m4a': { container: 'm4a', codec: 'aac', args: ['-c:a', 'aac', '-b:a', '192k'] }
+  '.mp3': {
+    label: 'MP3',
+    container: 'mp3',
+    codec: 'mp3',
+    audioArgs: ['-c:a', 'libmp3lame', '-b:a', '192k']
+  },
+  '.wav': {
+    label: 'WAV',
+    container: 'wav',
+    codec: 'pcm_s16le',
+    audioArgs: ['-c:a', 'pcm_s16le']
+  },
+  '.m4a': {
+    label: 'M4A',
+    container: 'm4a',
+    codec: 'aac',
+    audioArgs: ['-c:a', 'aac', '-b:a', '192k']
+  },
+  '.mp4': {
+    label: 'MP4（動画・YouTube 向け）',
+    container: 'mp4',
+    codec: 'aac',
+    audioArgs: ['-c:a', 'aac', '-b:a', '192k'],
+    // video を持つ形式は「映像トラックを足して書き出す形式」。
+    // 音声だけの入力とは常に別物になるため、同一判定からも除外する。
+    video: { input: videoInputArgs, args: VIDEO_ARGS }
+  }
 }
 
 // 出力パスの拡張子から出力形式を決める。未対応の拡張子はここで弾く。
@@ -28,9 +104,31 @@ export function outputFormatFor(outPath) {
   return format
 }
 
-// 出力パスの拡張子に対応する ffmpeg の音声コーデック引数を返す。
-export function codecArgsFor(outPath) {
-  return outputFormatFor(outPath).args
+/**
+ * 指定パスの拡張子が「映像を含む出力形式（MP4）」か。
+ * 映像を含む形式は書き出し専用で、読み込み・末尾への追加・一括結合の
+ * 入力としては受け付けない。
+ */
+export function isVideoOutputPath(filePath) {
+  const format = OUTPUT_FORMATS[extname(filePath || '').toLowerCase()]
+  return !!(format && format.video)
+}
+
+/**
+ * 保存ダイアログ用のフィルタ一覧を返す。
+ * preferredExt（元ファイルの拡張子など）に対応する形式を先頭に置き、
+ * 保存時のデフォルト形式にする。
+ */
+export function saveDialogFilters(preferredExt) {
+  const preferred = String(preferredExt || '').replace('.', '').toLowerCase()
+  const filters = Object.entries(OUTPUT_FORMATS).map(([ext, format]) => ({
+    name: format.label,
+    extensions: [ext.slice(1)]
+  }))
+  return [
+    ...filters.filter((f) => f.extensions[0] === preferred),
+    ...filters.filter((f) => f.extensions[0] !== preferred)
+  ]
 }
 
 // ffprobe の format_name は "mov,mp4,m4a,3gp,3g2,mj2" のように、その
@@ -47,5 +145,55 @@ function containerMatches(formatName, container) {
  * .wav（pcm_s16le）として保存する場合は「異なる」＝変換ありと判定される。
  */
 export function isSameFormat(info, format) {
+  // 映像トラックを足す形式（MP4）は、音声だけの入力とは常に別物。
+  // M4A の format_name は "mov,mp4,m4a,3gp,3g2,mj2" で mp4 を含むため、
+  // コンテナ名だけで比べると M4A → MP4 を「同じ」と誤判定してしまう。
+  if (format.video) return false
   return containerMatches(info.formatName, format.container) && info.codecName === format.codec
+}
+
+/**
+ * 入力ファイルを、出力パスの拡張子が示す形式へ変換して書き出す。
+ * ディスク上をストリーム処理するため、長尺でもメモリに全展開しない。
+ * 元ファイルは変更しない。
+ *
+ * MP4（映像を含む形式）の場合は、黒一色の映像を生成する仮想入力（lavfi）を
+ * 0 番目の入力として足し、音声と多重化する。映像の長さは音声に合わせて
+ * -t で指定し（videoInputArgs のコメント参照）、-movflags +faststart で
+ * moov atom を先頭に置く（アップロード先で頭出しが早くなる）。
+ */
+export async function encodeToFormat(inputPath, outPath) {
+  const format = outputFormatFor(outPath)
+
+  const args = ['-v', 'error', '-nostdin']
+  if (format.video) {
+    // 映像の長さを決めるため、先に音声の長さを調べる（メタデータのみで軽量）
+    const duration = await probeDuration(inputPath)
+    args.push(
+      ...format.video.input(duration),
+      '-i', inputPath,
+      '-map', '0:v:0',
+      '-map', '1:a:0',
+      ...format.video.args,
+      ...format.audioArgs,
+      '-movflags', '+faststart'
+    )
+  } else {
+    args.push('-i', inputPath, '-map', '0:a', ...format.audioArgs)
+  }
+  args.push('-y', outPath)
+
+  return new Promise((resolve, reject) => {
+    const proc = spawn(ffmpegPath, args)
+    let err = ''
+    proc.stderr.on('data', (d) => { err += d.toString() })
+    proc.on('error', reject)
+    proc.on('close', (code) => {
+      if (code !== 0) {
+        reject(new Error(`ffmpeg export failed (code ${code}): ${err.trim()}`))
+        return
+      }
+      resolve()
+    })
+  })
 }
