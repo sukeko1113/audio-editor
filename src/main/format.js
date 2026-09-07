@@ -67,6 +67,9 @@ export function isSupportedInputPath(filePath) {
 //   MP4 15fps            419 秒 / 272MB  ← 映像側が律速になり +2分
 // 下限が 247 秒なので 1fps まで落としても 5fps から大きくは縮まらない。
 // それより、極端に低いフレームレートを避けて一般的な値にしておく。
+//
+// この設定で書き出した MP4 が YouTube に受理されることは実地で確認済み。
+// 値を変えるときは、受理されるかを再度確かめること。
 const VIDEO_SIZE = '1280x720'
 const VIDEO_FPS = 5
 // キーフレーム間隔は約2秒。YouTube の推奨（GOP 長 2秒以下）に合わせる。
