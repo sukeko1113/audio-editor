@@ -3,7 +3,7 @@ import { join, extname, basename } from 'path'
 import { createReadStream, statSync } from 'fs'
 import { Readable } from 'stream'
 import { EditSession } from './editSession.js'
-import { saveDialogFilters } from './format.js'
+import { saveDialogFilters, inputDialogFilters, defaultOutputExtension } from './format.js'
 import { concatToFile, inspectFiles } from './batchConcat.js'
 
 // 編集セッション（版履歴とカット処理を管理）。
@@ -111,10 +111,7 @@ ipcMain.handle('dialog:openAudioFile', async () => {
   const result = await dialog.showOpenDialog({
     title: '音声ファイルを開く',
     properties: ['openFile'],
-    filters: [
-      { name: '音声ファイル (MP3 / WAV / M4A)', extensions: ['mp3', 'wav', 'm4a'] },
-      { name: 'すべてのファイル', extensions: ['*'] }
-    ]
+    filters: [...inputDialogFilters(), { name: 'すべてのファイル', extensions: ['*'] }]
   })
 
   if (result.canceled || result.filePaths.length === 0) {
@@ -128,7 +125,7 @@ ipcMain.handle('dialog:openAppendFile', async () => {
   const result = await dialog.showOpenDialog({
     title: '末尾に追加する音声ファイルを選択',
     properties: ['openFile'],
-    filters: [{ name: '音声ファイル (MP3 / WAV / M4A)', extensions: ['mp3', 'wav', 'm4a'] }]
+    filters: inputDialogFilters()
   })
 
   if (result.canceled || result.filePaths.length === 0) {
@@ -179,7 +176,9 @@ ipcMain.handle('audio:export', async () => {
     throw new Error('音声が読み込まれていません')
   }
 
-  const ext = session.originalExtension()
+  // 元ファイルが WMA のように入力専用の形式の場合、その拡張子では書き出せない。
+  // デフォルトの形式・ファイル名には出力できる形式を使う。
+  const ext = defaultOutputExtension(session.originalExtension())
   const hasEdits = session.hasEdits()
   // デフォルトのファイル名：元ファイル名 + "-edited"（編集が無い場合は "-converted"）+ 元の拡張子。
   // 元ファイルを上書きしないよう、どちらの場合も接尾辞を付ける（要件4.5）。
@@ -202,12 +201,12 @@ ipcMain.handle('audio:export', async () => {
 })
 
 // 「複数ファイルを結合」用のファイル選択ダイアログ（複数選択）。
-// MP4 は映像を含む書き出し専用の形式なので、入力の候補には出さない。
+// 受け付ける形式は format.js の入力形式の定義に従う（MP4 は書き出し専用なので出さない）。
 ipcMain.handle('dialog:openConcatFiles', async () => {
   const result = await dialog.showOpenDialog({
     title: '結合する音声ファイルを選択（複数選択可）',
     properties: ['openFile', 'multiSelections'],
-    filters: [{ name: '音声ファイル (MP3 / WAV / M4A)', extensions: ['mp3', 'wav', 'm4a'] }]
+    filters: inputDialogFilters()
   })
 
   if (result.canceled || result.filePaths.length === 0) {
@@ -234,7 +233,7 @@ ipcMain.handle('concat:run', async (event, filePaths) => {
   // デフォルトのファイル名・出力形式は先頭ファイルに合わせる。
   // 素材のファイルを上書きしないよう "-concat" を付ける（要件4.5 と同じ考え方）。
   const first = filePaths[0]
-  const ext = extname(first).replace('.', '').toLowerCase() || 'mp3'
+  const ext = defaultOutputExtension(extname(first))
   const base = basename(first, extname(first)) || 'audio'
 
   const result = await dialog.showSaveDialog({

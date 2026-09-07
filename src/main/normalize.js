@@ -7,6 +7,7 @@ import { ffmpegPath, ffprobePath } from './binaries.js'
  * 拡張子が .wav でも中身が ADPCM (adpcm_ima_wav 等) の圧縮形式だと、
  * Chromium の <audio> / Web Audio がデコードできず再生できない
  * （波形は main 側の ffmpeg で作るため表示だけは成功してしまう）。
+ * WMA (wmav1 / wmav2 / wmapro など) も同じく Chromium は再生できない。
  * そこで読み込み時に ffprobe でコーデックを調べ、ブラウザが素で再生できない
  * ものだけ ffmpeg で 16bit PCM WAV に変換してから扱う。
  *
@@ -17,6 +18,10 @@ import { ffmpegPath, ffprobePath } from './binaries.js'
 // MP3/M4A(aac) を WAV に展開すると長尺で数 GB の一時ファイルになるうえ、
 // 再生には何の利点も無いため、あえて対象外にしている。
 // カット/音量調整の中間ファイル(FLAC)も同じ理由でここに含まれる。
+//
+// 「再生できるものを挙げる」許可リストなので、ここに無いコーデックは
+// すべて変換対象になる。WMA 系 (wmav1 / wmav2 / wmapro / wmalossless /
+// wmavoice) は意図的に載せていない＝つねに 16bit PCM WAV へ変換される。
 const PLAYABLE_CODECS = new Set(['pcm_s16le', 'mp3', 'aac', 'flac', 'vorbis', 'opus'])
 
 // ブラウザが扱えるサンプルレートの範囲（Web Audio がサポートする 3000〜384000Hz）。
