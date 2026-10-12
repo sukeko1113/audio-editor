@@ -335,6 +335,9 @@ async function loadFile(filePath) {
   } catch (err) {
     if (token === loadToken) {
       statusEl.textContent = ''
+      // 読み込み前に表示していた再生バー・編集ツールは、失敗後は対象が無いので隠す
+      transportEl.hidden = true
+      editToolsEl.hidden = true
       placeholderEl.hidden = false
       placeholderEl.textContent = `読み込みに失敗しました: ${errorText(err)}`
     }
