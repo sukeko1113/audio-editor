@@ -39,11 +39,11 @@ export function buildSegments(markers, duration) {
 
 /**
  * 「元ファイル名-分割01.拡張子」の形のファイル名を count 個ぶん返す。
- * 連番は2桁のゼロ埋めで、101個以上になるときは3桁にそろえる
- * （桁数が混ざると、ファイル名順に並べたときに順序が崩れるため）。
+ * 連番は総数の桁数（最低2桁）でゼロ埋めする：99個以下は2桁、100〜999個は3桁、
+ * 1000個以上は4桁。桁数が混ざると、ファイル名順に並べたときに順序が崩れるため。
  */
 export function splitFileNames(baseName, ext, count) {
-  const width = count > 100 ? 3 : 2
+  const width = Math.max(2, String(count).length)
   return Array.from(
     { length: count },
     (_, i) => `${baseName}-分割${String(i + 1).padStart(width, '0')}.${ext}`
