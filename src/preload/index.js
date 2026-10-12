@@ -37,6 +37,30 @@ contextBridge.exposeInMainWorld('api', {
   //         キャンセル時 null（失敗時は例外）
   exportAudio: () => ipcRenderer.invoke('audio:export'),
 
+  // --- 区切り線による分割書き出し ---
+
+  // 分割書き出しダイアログの初期値
+  // 返り値: { formats: [{ ext, label }], defaultExt, folder }
+  getSplitOptions: () => ipcRenderer.invoke('split:options'),
+
+  // 出力先フォルダを選ぶダイアログ。返り値: フォルダのパス / キャンセル時 null
+  selectFolder: (defaultPath) => ipcRenderer.invoke('dialog:selectFolder', defaultPath),
+
+  // 書き出すファイル名の一覧と、そのうち出力先にすでに存在するもの（上書き確認用）
+  // 引数: { markers: number[]（区切り位置・秒）, ext, folder }
+  // 返り値: { names: string[], existing: string[] }
+  checkSplit: (options) => ipcRenderer.invoke('split:check', options),
+
+  // 区切り位置で分割して書き出す。返り値: { folder, count }（失敗時は例外）
+  runSplit: (options) => ipcRenderer.invoke('split:run', options),
+
+  // 分割書き出しの進捗（何個中何個目か）を受け取る。返り値: 購読を解除する関数
+  onSplitProgress: (callback) => {
+    const listener = (_event, progress) => callback(progress)
+    ipcRenderer.on('split:progress', listener)
+    return () => ipcRenderer.removeListener('split:progress', listener)
+  },
+
   // --- 複数ファイルの一括結合（編集セッションとは独立した機能） ---
 
   // 結合するファイルの選択ダイアログ（複数選択）を開く

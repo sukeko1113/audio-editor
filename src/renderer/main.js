@@ -31,6 +31,31 @@ const zoomInBtn = document.getElementById('zoom-in-btn')
 const zoomSlider = document.getElementById('zoom-slider')
 const zoomValueEl = document.getElementById('zoom-value')
 
+// 区切り線（分割書き出し）
+const markerAddBtn = document.getElementById('marker-add-btn')
+const markerEvenBtn = document.getElementById('marker-even-btn')
+const markerClearBtn = document.getElementById('marker-clear-btn')
+const markerCountEl = document.getElementById('marker-count')
+const splitExportBtn = document.getElementById('split-export-btn')
+
+// 均等に区切る：分割数の入力ダイアログ
+const evenOverlayEl = document.getElementById('even-overlay')
+const evenInputEl = document.getElementById('even-input')
+const evenInfoEl = document.getElementById('even-info')
+const evenErrorEl = document.getElementById('even-error')
+const evenCancelBtn = document.getElementById('even-cancel-btn')
+const evenRunBtn = document.getElementById('even-run-btn')
+
+// 分割して書き出し：出力形式・出力先の選択ダイアログ
+const splitOverlayEl = document.getElementById('split-overlay')
+const splitFormatEl = document.getElementById('split-format')
+const splitFolderEl = document.getElementById('split-folder')
+const splitFolderBtn = document.getElementById('split-folder-btn')
+const splitSummaryEl = document.getElementById('split-summary')
+const splitProgressEl = document.getElementById('split-progress')
+const splitCancelBtn = document.getElementById('split-cancel-btn')
+const splitRunBtn = document.getElementById('split-run-btn')
+
 // 一括結合の確認ダイアログ
 const concatOverlayEl = document.getElementById('concat-overlay')
 const concatListEl = document.getElementById('concat-list')
@@ -57,6 +82,21 @@ let busy = false // カット処理中などの多重操作を防ぐ
 let fileLoaded = false // 音声が読み込まれているか（保存は編集の有無に関わらず常に可能）
 let canUndo = false // 1つ前の版に戻せるか
 let canRedo = false // 1つ先の版に進めるか
+
+// 区切り線（分割書き出し用）。編集の版履歴とは独立していて、追加・移動・削除は
+// アンドゥ/リドゥの対象外。時間軸が変わる操作（カット・末尾追加）では全部消す。
+// 線は wavesurfer の Regions とは別に、波形の上へ重ねる自前の要素で描く
+// （Regions はカットの範囲選択に使っており、混ぜると件数やカット対象が狂うため）。
+const MIN_MARKER_GAP = 0.1 // 先頭・末尾・他の区切りからの最小間隔(秒)。main の split.js と同じ値
+const MARKER_EPSILON = 1e-6 // 浮動小数の誤差で「ちょうど 0.1 秒」を弾かないための許容
+const MARKER_COLOR = '#2ecc71'
+const MARKER_COLOR_SELECTED = '#ffe14d'
+const MARKERS_CLEARED_NOTE = '。時間軸が変わったため区切り線をすべて削除しました'
+let markers = [] // [{ time, el }] 時刻順
+let selectedMarker = null
+let markerLayerEl = null // wavesurfer の波形ラッパー内に置く、線の重ね置き用レイヤー
+let markerDrag = null // ドラッグ中の区切り
+let audioDuration = 0 // 現在描画している音声の長さ(秒)
 
 // 一括結合の確認ダイアログの状態。編集セッション（版履歴）とは独立している。
 let concatItems = [] // [{ path, name, duration }] ダイアログに表示中の並び順
@@ -136,6 +176,12 @@ function updateEditControls() {
   volumeDoubleBtn.disabled = !audioReady
   volumeMuteBtn.disabled = !audioReady
   appendFileBtn.disabled = !audioReady
+  // 区切り線の操作。分割書き出しは区切りが1本以上あるときだけ
+  markerCountEl.textContent = `区切り: ${markers.length}`
+  markerAddBtn.disabled = !audioReady
+  markerEvenBtn.disabled = !audioReady
+  markerClearBtn.disabled = !audioReady || markers.length === 0
+  splitExportBtn.disabled = !audioReady || !fileLoaded || markers.length === 0
   // 一括結合はファイルが開かれていなくても使えるので、処理中かどうかだけで決める
   concatFilesBtn.disabled = busy
   // アンドゥ/リドゥは戻せる/進める版があるときのみ有効
@@ -208,6 +254,7 @@ function applyHistoryState(state) {
 }
 
 function selectRegion(region) {
+  if (region) selectMarker(null) // 範囲と区切りは同時に選択しない（Delete の対象を1つにするため）
   if (selectedRegion && selectedRegion !== region) {
     selectedRegion.setOptions({ color: REGION_COLOR })
   }
@@ -222,12 +269,375 @@ function clearSelection() {
   updateEditControls()
 }
 
+// ---- 区切り線 ----
+
+// 秒を m:ss.mmm 形式に整形（区切り位置はミリ秒まで見せる）
+function formatTimePrecise(seconds) {
+  if (!Number.isFinite(seconds)) seconds = 0
+  const m = Math.floor(seconds / 60)
+  const s = seconds - m * 60
+  return `${m}:${s.toFixed(3).padStart(6, '0')}`
+}
+
+// 波形上のレイヤーへ、現在の markers の線を作り直す
+function mountMarkers() {
+  markerLayerEl = null
+  if (!wavesurfer) return
+  const layer = document.createElement('div')
+  // 波形の幅（ズームで伸びる）にぴったり重ねる。線の部分だけがマウスを受ける。
+  // wavesurfer の Shadow DOM の中なので、スタイルはインラインで指定する。
+  layer.style.cssText = 'position:absolute;top:0;left:0;width:100%;height:100%;z-index:6;pointer-events:none;'
+  wavesurfer.getWrapper().appendChild(layer)
+  markerLayerEl = layer
+  for (const marker of markers) {
+    marker.el = createMarkerEl(marker)
+    layer.appendChild(marker.el)
+  }
+}
+
+function positionMarker(marker) {
+  const pct = audioDuration > 0 ? (marker.time / audioDuration) * 100 : 0
+  marker.el.style.left = `${pct}%`
+  marker.el.title = `区切り ${formatTimePrecise(marker.time)}（ドラッグで移動／右クリックで削除）`
+}
+
+function styleMarker(marker) {
+  const selected = marker === selectedMarker
+  const color = selected ? MARKER_COLOR_SELECTED : MARKER_COLOR
+  const shadow = selected ? '0 0 0 1px rgba(0,0,0,0.7)' : 'none'
+  for (const part of marker.el.children) {
+    part.style.background = color
+    part.style.boxShadow = shadow
+  }
+}
+
+// 区切り線1本ぶんの要素。13px 幅の当たり判定の中に、3px の線と上端のつまみを置く。
+function createMarkerEl(marker) {
+  const el = document.createElement('div')
+  el.style.cssText =
+    'position:absolute;top:0;height:100%;width:13px;margin-left:-6px;cursor:ew-resize;pointer-events:auto;'
+  const line = document.createElement('div')
+  line.style.cssText = 'position:absolute;top:0;left:5px;width:3px;height:100%;'
+  const grip = document.createElement('div')
+  grip.style.cssText = 'position:absolute;top:0;left:1px;width:11px;height:10px;border-radius:0 0 3px 3px;'
+  el.append(line, grip)
+  marker.el = el
+  positionMarker(marker)
+  styleMarker(marker)
+
+  // 波形側の処理（クリックでシーク・ドラッグで範囲選択）へ伝えない
+  el.addEventListener('pointerdown', (e) => {
+    e.stopPropagation()
+    if (e.button !== 0 || busy) return
+    e.preventDefault()
+    clearSelection()
+    selectMarker(marker)
+    markerDrag = marker
+    el.setPointerCapture(e.pointerId)
+  })
+  el.addEventListener('pointermove', (e) => {
+    if (markerDrag !== marker) return
+    moveMarker(marker, timeAtClientX(e.clientX))
+  })
+  const endDrag = (e) => {
+    if (markerDrag !== marker) return
+    markerDrag = null
+    try {
+      el.releasePointerCapture(e.pointerId)
+    } catch {
+      /* すでに解放されている */
+    }
+  }
+  el.addEventListener('pointerup', endDrag)
+  el.addEventListener('pointercancel', endDrag)
+  el.addEventListener('click', (e) => e.stopPropagation())
+  el.addEventListener('dblclick', (e) => e.stopPropagation())
+  el.addEventListener('contextmenu', (e) => {
+    e.preventDefault()
+    e.stopPropagation()
+    if (!busy) removeMarker(marker)
+  })
+  return el
+}
+
+// 画面上の X 座標を、音声上の時刻(秒)に直す。波形の幅はズームで変わり、
+// スクロールするとレイヤーの位置もずれるので、毎回レイヤーの矩形から求める。
+function timeAtClientX(clientX) {
+  const rect = markerLayerEl.getBoundingClientRect()
+  if (rect.width <= 0) return 0
+  return ((clientX - rect.left) / rect.width) * audioDuration
+}
+
+// この時刻に区切りを置けるか（先頭・末尾・他の区切りから 0.1 秒以上離れていること）
+function canPlaceMarker(time, ignore = null) {
+  if (time < MIN_MARKER_GAP - MARKER_EPSILON) return false
+  if (time > audioDuration - MIN_MARKER_GAP + MARKER_EPSILON) return false
+  return markers.every(
+    (m) => m === ignore || Math.abs(m.time - time) >= MIN_MARKER_GAP - MARKER_EPSILON
+  )
+}
+
+function addMarker(time) {
+  const marker = { time, el: null }
+  markers.push(marker)
+  markers.sort((a, b) => a.time - b.time)
+  if (markerLayerEl) markerLayerEl.appendChild(createMarkerEl(marker))
+  updateEditControls()
+  return marker
+}
+
+// 区切りを隣の区切り・先頭・末尾から 0.1 秒以上離れた範囲へ動かす（追い越しはしない）
+function moveMarker(marker, time) {
+  const i = markers.indexOf(marker)
+  if (i < 0) return
+  const lo = i > 0 ? markers[i - 1].time + MIN_MARKER_GAP : MIN_MARKER_GAP
+  const hi = i < markers.length - 1 ? markers[i + 1].time - MIN_MARKER_GAP : audioDuration - MIN_MARKER_GAP
+  if (lo > hi) return
+  marker.time = Math.min(Math.max(time, lo), hi)
+  positionMarker(marker)
+  statusEl.textContent = `区切り: ${formatTimePrecise(marker.time)}`
+}
+
+function removeMarker(marker) {
+  markers = markers.filter((m) => m !== marker)
+  if (marker.el) marker.el.remove()
+  if (selectedMarker === marker) selectedMarker = null
+  updateEditControls()
+}
+
+function selectMarker(marker) {
+  const prev = selectedMarker
+  selectedMarker = marker
+  if (prev && prev.el) styleMarker(prev)
+  if (marker && marker.el) styleMarker(marker)
+}
+
+// すべての区切りを消す。消すものがあったかどうかを返す（表示の出し分け用）。
+function clearMarkers() {
+  const had = markers.length > 0
+  for (const marker of markers) {
+    if (marker.el) marker.el.remove()
+  }
+  markers = []
+  selectedMarker = null
+  markerDrag = null
+  updateEditControls()
+  return had
+}
+
+// 現在の再生位置に区切りを追加する
+function addMarkerAtPlayhead() {
+  if (busy || !wavesurfer) return
+  const time = wavesurfer.getCurrentTime()
+  if (!canPlaceMarker(time)) {
+    statusEl.textContent =
+      '区切りを追加できません：先頭・末尾・他の区切りから 0.1 秒未満の位置です'
+    return
+  }
+  clearSelection()
+  selectMarker(addMarker(time))
+  statusEl.textContent = `区切りを追加しました（${formatTimePrecise(time)}）`
+}
+
+async function clearMarkersWithConfirm() {
+  if (busy || markers.length === 0) return
+  if (!(await confirmDialog(`区切り線 ${markers.length} 本をすべて削除しますか？`))) return
+  clearMarkers()
+  statusEl.textContent = '区切り線をすべて削除しました'
+}
+
+// ---- 均等に区切る ----
+
+// 入力欄の値を検証する。{ n } か { error } を返す。
+function validateEvenCount() {
+  const raw = evenInputEl.value.trim()
+  if (!/^\d+$/.test(raw) || Number(raw) < 2) {
+    return { error: '分割数は 2 以上の整数を入力してください' }
+  }
+  const n = Number(raw)
+  if (audioDuration / n < MIN_MARKER_GAP - MARKER_EPSILON) {
+    const max = Math.floor(audioDuration / MIN_MARKER_GAP + MARKER_EPSILON)
+    return { error: `分割数が多すぎます。1 区間が 0.1 秒未満になるため、${max} 以下にしてください` }
+  }
+  return { n }
+}
+
+function updateEvenDialog() {
+  const result = validateEvenCount()
+  evenErrorEl.hidden = !result.error
+  evenErrorEl.textContent = result.error || ''
+  evenRunBtn.disabled = !!result.error
+  evenInfoEl.textContent = result.error
+    ? ''
+    : `1 区間あたり約 ${(audioDuration / result.n).toFixed(2)} 秒（区切り線 ${result.n - 1} 本）`
+}
+
+function openEvenDialog() {
+  if (busy || !wavesurfer) return
+  evenInputEl.value = '2'
+  updateEvenDialog()
+  evenOverlayEl.hidden = false
+  busy = true
+  openFileBtn.disabled = true
+  updateEditControls()
+  evenInputEl.focus()
+  evenInputEl.select()
+}
+
+function closeEvenDialog() {
+  evenOverlayEl.hidden = true
+  busy = false
+  openFileBtn.disabled = false
+  updateEditControls()
+}
+
+async function runEven() {
+  const result = validateEvenCount()
+  if (result.error) return
+  const n = result.n
+  closeEvenDialog()
+
+  if (markers.length > 0) {
+    const ok = await confirmDialog(
+      `既存の区切り線 ${markers.length} 本を、${n} 等分の区切り線（${n - 1} 本）に置き換えますか？`
+    )
+    if (!ok) return
+  }
+
+  clearMarkers()
+  clearSelection()
+  for (let i = 1; i < n; i++) {
+    addMarker((audioDuration * i) / n)
+  }
+  statusEl.textContent =
+    `${n} 等分する区切り線を ${n - 1} 本配置しました（1 区間 約 ${(audioDuration / n).toFixed(2)} 秒）`
+}
+
+// ---- 分割して書き出し ----
+
+let splitRunning = false // 書き出し中（キャンセル・設定変更を止める）
+
+function setSplitProgress(text) {
+  splitProgressEl.textContent = text
+  splitProgressEl.hidden = !text
+}
+
+// 書き出すファイル数と先頭・末尾のファイル名を表示する。出力形式を変えるたびに更新する。
+async function refreshSplitSummary() {
+  splitSummaryEl.textContent = ''
+  try {
+    const { names } = await window.api.checkSplit({
+      markers: markers.map((m) => m.time),
+      ext: splitFormatEl.value,
+      folder: splitFolderEl.value
+    })
+    splitSummaryEl.textContent =
+      names.length === 1
+        ? `1 個のファイルを書き出します（${names[0]}）`
+        : `${names.length} 個のファイルを書き出します（${names[0]} 〜 ${names[names.length - 1]}）`
+  } catch (err) {
+    splitSummaryEl.textContent = errorText(err)
+  }
+}
+
+async function openSplitDialog() {
+  if (busy || !fileLoaded || markers.length === 0) return
+  let options
+  try {
+    options = await window.api.getSplitOptions()
+  } catch (err) {
+    statusEl.textContent = `分割書き出しを開始できません: ${errorText(err)}`
+    return
+  }
+
+  splitFormatEl.textContent = ''
+  for (const format of options.formats) {
+    const option = document.createElement('option')
+    option.value = format.ext
+    option.textContent = format.label
+    option.selected = format.ext === options.defaultExt
+    splitFormatEl.appendChild(option)
+  }
+  splitFolderEl.value = options.folder
+  setSplitProgress('')
+  splitOverlayEl.hidden = false
+  busy = true
+  openFileBtn.disabled = true
+  updateEditControls()
+  splitRunBtn.focus()
+  await refreshSplitSummary()
+}
+
+function closeSplitDialog() {
+  splitOverlayEl.hidden = true
+  busy = false
+  openFileBtn.disabled = false
+  updateEditControls()
+}
+
+// 書き出し中は、ダイアログの操作をすべて止める
+function setSplitRunning(running) {
+  splitRunning = running
+  splitFormatEl.disabled = running
+  splitFolderBtn.disabled = running
+  splitCancelBtn.disabled = running
+  splitRunBtn.disabled = running
+}
+
+async function runSplit() {
+  if (splitRunning) return
+  const options = {
+    markers: markers.map((m) => m.time),
+    ext: splitFormatEl.value,
+    folder: splitFolderEl.value
+  }
+
+  // 同名のファイルがあれば、書き出す前に上書きしてよいか確かめる
+  let check
+  try {
+    check = await window.api.checkSplit(options)
+  } catch (err) {
+    setSplitProgress(`書き出せません: ${errorText(err)}`)
+    return
+  }
+  if (check.existing.length > 0) {
+    const shown = check.existing.slice(0, 5).join('\n')
+    const more = check.existing.length > 5 ? `\n…ほか ${check.existing.length - 5} 個` : ''
+    const ok = await confirmDialog(
+      `出力先に同じ名前のファイルが ${check.existing.length} 個あります。上書きしますか？\n\n${shown}${more}`
+    )
+    if (!ok) return
+  }
+
+  setSplitRunning(true)
+  setSplitProgress('書き出しを開始しています…')
+  const stopProgress = window.api.onSplitProgress(({ current, total, name }) => {
+    setSplitProgress(`書き出し中… ${current} / ${total} 個目（${name}）`)
+  })
+
+  let result = null
+  try {
+    result = await window.api.runSplit(options)
+  } catch (err) {
+    setSplitProgress(`書き出しに失敗しました: ${errorText(err)}`)
+  } finally {
+    stopProgress()
+    setSplitRunning(false)
+  }
+  if (!result) return
+
+  closeSplitDialog()
+  statusEl.textContent = `${result.count} 個のファイルに分割して書き出しました: ${result.folder}`
+}
+
 function destroyWavesurfer() {
   if (wavesurfer) {
     wavesurfer.destroy()
     wavesurfer = null
     regionsPlugin = null
     selectedRegion = null
+    markerLayerEl = null // 線の要素は wavesurfer と一緒に消える（状態は markers に残る）
+    markerDrag = null
   }
 }
 
@@ -267,8 +677,15 @@ async function renderWaveform(peaks, duration, token) {
     updateEditControls()
   })
 
+  // 区切り線を描き直す（音量調整・やり直し等で波形を作り直しても線は維持する）
+  audioDuration = duration
+  mountMarkers()
+
   // 波形の何もない所をクリックしたら選択解除
-  wavesurfer.on('interaction', () => clearSelection())
+  wavesurfer.on('interaction', () => {
+    clearSelection()
+    selectMarker(null)
+  })
 
   wavesurfer.on('play', () => setTransportState('playing'))
   wavesurfer.on('pause', () => {
@@ -311,6 +728,7 @@ async function loadFile(filePath) {
   busy = true
   fileLoaded = false // 読み込みが完了するまでは保存できない
   zoomFactor = 1 // 新しいファイルは全体表示から始める
+  clearMarkers() // 区切り線は読み込み前のファイルのもの
   statusEl.textContent = '波形を生成中…'
   openFileBtn.disabled = true
   appendFileBtn.disabled = true
@@ -368,6 +786,8 @@ async function doAppend() {
     const state = await window.api.appendAudio(filePath)
     if (token !== loadToken) return
 
+    // 時間軸が変わるので、区切り線は引き継げない
+    const clearedMarkers = clearMarkers()
     await renderWaveform(state.peaks, state.duration, token)
     if (token !== loadToken) return
 
@@ -375,7 +795,9 @@ async function doAppend() {
     setTransportState('stopped')
     clearSelection()
     updateTime()
-    statusEl.textContent = `ファイルを追加しました（長さ: ${formatTime(state.duration)}）`
+    statusEl.textContent =
+      `ファイルを追加しました（長さ: ${formatTime(state.duration)}）` +
+      (clearedMarkers ? MARKERS_CLEARED_NOTE : '')
   } catch (err) {
     if (token === loadToken) {
       statusEl.textContent = `ファイルの追加に失敗しました: ${errorText(err)}`
@@ -405,6 +827,8 @@ async function doCut() {
     const state = await window.api.cutRegions(regions)
     if (token !== loadToken) return
 
+    // 時間軸が変わるので、区切り線は引き継げない
+    const clearedMarkers = clearMarkers()
     await renderWaveform(state.peaks, state.duration, token)
     if (token !== loadToken) return
 
@@ -412,7 +836,8 @@ async function doCut() {
     setTransportState('stopped')
     clearSelection()
     updateTime()
-    statusEl.textContent = `カット完了（長さ: ${formatTime(state.duration)}）`
+    statusEl.textContent =
+      `カット完了（長さ: ${formatTime(state.duration)}）` + (clearedMarkers ? MARKERS_CLEARED_NOTE : '')
   } catch (err) {
     if (token === loadToken) {
       statusEl.textContent = `カットに失敗しました: ${errorText(err)}`
@@ -506,6 +931,10 @@ async function navigateHistory(direction) {
     const state = direction === 'undo' ? await window.api.undo() : await window.api.redo()
     if (token !== loadToken) return
 
+    // カット・末尾追加を戻す／やり直すと時間軸が変わる（音量調整なら変わらない）。
+    // 区切り線自体は履歴の対象外だが、長さが違う音声には当てはまらないので消す。
+    const timelineChanged = Math.abs(state.duration - audioDuration) > 0.001
+    const clearedMarkers = timelineChanged ? clearMarkers() : false
     await renderWaveform(state.peaks, state.duration, token)
     if (token !== loadToken) return
 
@@ -513,12 +942,14 @@ async function navigateHistory(direction) {
     setTransportState('stopped')
     clearSelection()
     updateTime()
+    const note = clearedMarkers ? MARKERS_CLEARED_NOTE : ''
     if (direction === 'undo') {
-      statusEl.textContent = state.hasEdits
-        ? `元に戻しました（長さ: ${formatTime(state.duration)}）`
-        : '最初の状態に戻しました'
+      statusEl.textContent =
+        (state.hasEdits
+          ? `元に戻しました（長さ: ${formatTime(state.duration)}）`
+          : '最初の状態に戻しました') + note
     } else {
-      statusEl.textContent = `やり直しました（長さ: ${formatTime(state.duration)}）`
+      statusEl.textContent = `やり直しました（長さ: ${formatTime(state.duration)}）` + note
     }
   } catch (err) {
     if (token === loadToken) {
@@ -799,8 +1230,12 @@ async function runConcat() {
 // ---- はい／いいえの確認ダイアログ ----
 // 押されるまで待って boolean を返す。開いている間は busy 扱いにする。
 let confirmResolve = null
+// 確認ダイアログを開く前の busy。分割書き出しのように、別のダイアログを開いたまま
+// 確認を挟む場合に、閉じたあとで元の状態（busy のまま）へ戻すために覚えておく。
+let confirmPrevBusy = false
 
 function confirmDialog(message) {
+  confirmPrevBusy = busy
   confirmMessageEl.textContent = message
   confirmOverlayEl.hidden = false
   busy = true
@@ -815,8 +1250,8 @@ function confirmDialog(message) {
 function closeConfirmDialog(answer) {
   if (!confirmResolve) return
   confirmOverlayEl.hidden = true
-  busy = false
-  openFileBtn.disabled = false
+  busy = confirmPrevBusy
+  openFileBtn.disabled = confirmPrevBusy
   updateEditControls()
   const resolve = confirmResolve
   confirmResolve = null
@@ -825,7 +1260,12 @@ function closeConfirmDialog(answer) {
 
 // モーダルを開いている間は、背後の編集ショートカットを効かせない
 function isModalOpen() {
-  return !concatOverlayEl.hidden || !confirmOverlayEl.hidden
+  return (
+    !concatOverlayEl.hidden ||
+    !confirmOverlayEl.hidden ||
+    !evenOverlayEl.hidden ||
+    !splitOverlayEl.hidden
+  )
 }
 
 openFileBtn.addEventListener('click', openAndLoad)
@@ -863,6 +1303,35 @@ clearRegionsBtn.addEventListener('click', () => {
 })
 
 cutBtn.addEventListener('click', doCut)
+
+// 区切り線
+markerAddBtn.addEventListener('click', addMarkerAtPlayhead)
+markerEvenBtn.addEventListener('click', openEvenDialog)
+markerClearBtn.addEventListener('click', clearMarkersWithConfirm)
+splitExportBtn.addEventListener('click', openSplitDialog)
+
+evenInputEl.addEventListener('input', updateEvenDialog)
+evenInputEl.addEventListener('keydown', (e) => {
+  // IME の変換確定の Enter では実行しない
+  if (e.key === 'Enter' && !e.isComposing) {
+    e.preventDefault()
+    if (!evenRunBtn.disabled) runEven()
+  }
+})
+evenCancelBtn.addEventListener('click', closeEvenDialog)
+evenRunBtn.addEventListener('click', runEven)
+
+splitFormatEl.addEventListener('change', refreshSplitSummary)
+splitFolderBtn.addEventListener('click', async () => {
+  const folder = await window.api.selectFolder(splitFolderEl.value)
+  if (!folder) return
+  splitFolderEl.value = folder
+  refreshSplitSummary()
+})
+splitCancelBtn.addEventListener('click', () => {
+  if (!splitRunning) closeSplitDialog()
+})
+splitRunBtn.addEventListener('click', runSplit)
 saveBtn.addEventListener('click', doSave)
 
 undoBtn.addEventListener('click', () => navigateHistory('undo'))
@@ -906,6 +1375,10 @@ document.addEventListener('keydown', (e) => {
       e.preventDefault()
       if (!confirmOverlayEl.hidden) {
         closeConfirmDialog(false)
+      } else if (!splitOverlayEl.hidden) {
+        if (!splitRunning) closeSplitDialog()
+      } else if (!evenOverlayEl.hidden) {
+        closeEvenDialog()
       } else if (!concatRunning) {
         closeConcatDialog()
       }
@@ -931,11 +1404,23 @@ document.addEventListener('keydown', (e) => {
     }
   }
 
-  // Delete / Backspace キーで選択中の範囲を削除
-  if ((e.key === 'Delete' || e.key === 'Backspace') && selectedRegion && !busy) {
+  // M キーで、現在の再生位置に区切り線を追加
+  if ((e.key === 'm' || e.key === 'M') && !e.ctrlKey && !e.metaKey && !e.altKey && !e.repeat) {
     e.preventDefault()
-    selectedRegion.remove()
-    selectedRegion = null
-    updateEditControls()
+    addMarkerAtPlayhead()
+    return
+  }
+
+  // Delete / Backspace キーで、選択中の区切り線、なければ選択中の範囲を削除
+  if ((e.key === 'Delete' || e.key === 'Backspace') && !busy) {
+    if (selectedMarker) {
+      e.preventDefault()
+      removeMarker(selectedMarker)
+    } else if (selectedRegion) {
+      e.preventDefault()
+      selectedRegion.remove()
+      selectedRegion = null
+      updateEditControls()
+    }
   }
 })

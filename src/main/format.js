@@ -204,6 +204,17 @@ export function saveDialogFilters(preferredExt) {
   ]
 }
 
+/**
+ * 出力形式の一覧（分割書き出しダイアログの選択肢用）。保存ダイアログと同じ並び。
+ * @returns {Array<{ ext: string, label: string }>}
+ */
+export function outputFormatList() {
+  return Object.entries(OUTPUT_FORMATS).map(([ext, format]) => ({
+    ext: ext.slice(1),
+    label: format.label
+  }))
+}
+
 // ffprobe の format_name は "mov,mp4,m4a,3gp,3g2,mj2" のように、その
 // デマルチプレクサが扱う名前のカンマ区切りで返るため、含まれるかで判定する。
 function containerMatches(formatName, container) {
@@ -234,25 +245,41 @@ export function isSameFormat(info, format) {
  * 0 番目の入力として足し、音声と多重化する。映像の長さは音声に合わせて
  * -t で指定し（videoInputArgs のコメント参照）、-movflags +faststart で
  * moov atom を先頭に置く（アップロード先で頭出しが早くなる）。
+ *
+ * range を渡すと、入力のその区間だけを書き出す（分割書き出し用）：
+ *   { start, duration, totalDuration }
+ *   start         区間の開始(秒)
+ *   duration      区間の長さ(秒)。null なら入力の終わりまで
+ *   totalDuration 入力全体の長さ(秒)。MP4 の映像の長さを決めるのに使う
+ * 切り出しは再エンコードで行う（ストリームコピーだと、MP3/AAC のフレーム境界に
+ * しか切れず、区切り位置がずれるため）。-ss を -i の前に置く入力シークは、
+ * 再エンコードのときはフレーム精度で切り出される。入力のシーク位置までは
+ * 読み飛ばすので、長尺でも区間の数に比例して遅くならない。
  */
-export async function encodeToFormat(inputPath, outPath) {
+export async function encodeToFormat(inputPath, outPath, range = null) {
   const format = outputFormatFor(outPath)
 
   const args = ['-v', 'error', '-nostdin']
+  const seekArgs = range ? ['-ss', range.start.toFixed(6)] : []
+  const lengthArgs = range && range.duration !== null ? ['-t', range.duration.toFixed(6)] : []
   if (format.video) {
     // 映像の長さを決めるため、先に音声の長さを調べる（メタデータのみで軽量）
-    const duration = await probeDuration(inputPath)
+    const duration = range
+      ? (range.duration !== null ? range.duration : range.totalDuration - range.start)
+      : await probeDuration(inputPath)
     args.push(
       ...format.video.input(duration),
+      ...seekArgs,
       '-i', inputPath,
       '-map', '0:v:0',
       '-map', '1:a:0',
+      ...lengthArgs,
       ...format.video.args,
       ...format.audioArgs,
       '-movflags', '+faststart'
     )
   } else {
-    args.push('-i', inputPath, '-map', '0:a', ...format.audioArgs)
+    args.push(...seekArgs, '-i', inputPath, '-map', '0:a', ...lengthArgs, ...format.audioArgs)
   }
   args.push('-y', outPath)
 

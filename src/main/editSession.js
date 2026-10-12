@@ -1,6 +1,6 @@
 import { spawn } from 'child_process'
-import { join, extname } from 'path'
-import { mkdtempSync, rmSync } from 'fs'
+import { join, extname, basename } from 'path'
+import { mkdtempSync, rmSync, existsSync, statSync } from 'fs'
 import { tmpdir } from 'os'
 import { ffmpegPath } from './binaries.js'
 import { generatePeaks, probeDuration } from './peaks.js'
@@ -18,10 +18,12 @@ import {
   isSameFormat,
   isMp4Path,
   overwritesSourceVideo,
+  isSamePath,
   isSupportedInputPath,
   INPUT_FORMATS_LABEL
 } from './format.js'
 import { MAX_DURATION, formatDurationJa } from './duration.js'
+import { buildSegments, splitFileNames } from './split.js'
 
 // 編集対象の範囲どうしを正規化（0〜duration にクランプ・ソート・重なり/隣接をマージ）する。
 // カット・音量調整で共用する。
@@ -480,6 +482,84 @@ export class EditSession {
     // 書き出しは format.js が担当する（MP4 は黒一色の映像トラックを足して書き出す）
     await encodeToFormat(cur.path, outPath)
     return { path: outPath, converted: conversionOnly }
+  }
+
+  /**
+   * 区切り位置から、分割書き出しの区間・出力ファイル名・出力パスを求める。
+   * 分割の対象は現在の版（カット・音量調整を反映した状態）。
+   * 出力形式（ext）はここで検証され、未対応ならエラーになる。
+   */
+  splitPlan(markers, ext, folder) {
+    const cur = this.current()
+    if (!cur) throw new Error('音声が読み込まれていません')
+    // 拡張子の検証（未対応の形式、パス区切りなどの紛れ込みをここで弾く）
+    outputFormatFor(`split.${ext}`)
+    if (!folder) throw new Error('出力先フォルダが指定されていません')
+
+    const segments = buildSegments(markers, cur.duration)
+    const base = basename(this.originalPath || '', extname(this.originalPath || '')) || 'audio'
+    const names = splitFileNames(base, ext, segments.length)
+    return { segments, names, paths: names.map((name) => join(folder, name)) }
+  }
+
+  // 書き出すファイル名の一覧と、そのうち出力先にすでに存在するもの（上書き確認用）
+  splitCheck(markers, ext, folder) {
+    const { names, paths } = this.splitPlan(markers, ext, folder)
+    return { names, existing: names.filter((_, i) => existsSync(paths[i])) }
+  }
+
+  /**
+   * 現在の編集結果を、区切り位置で分割して folder へ書き出す。
+   * 元ファイルと版履歴は変更しない。区間は再エンコードで切り出す（encodeToFormat）。
+   *
+   * 途中で失敗した場合、書きかけのファイルは削除するが、それまでに書き出した
+   * ファイルは残す（長尺の分割では、成功ぶんまで捨てるほうが損失が大きいため）。
+   *
+   * @param {(progress: {current:number, total:number, name:string}) => void} onProgress
+   * @returns {Promise<{ folder: string, count: number }>}
+   */
+  async exportSplit(markers, ext, folder, onProgress = () => {}) {
+    const cur = this.current()
+    if (!cur) throw new Error('音声が読み込まれていません')
+    const { segments, names, paths } = this.splitPlan(markers, ext, folder)
+
+    let isFolder = false
+    try {
+      isFolder = statSync(folder).isDirectory()
+    } catch {
+      /* 存在しない */
+    }
+    if (!isFolder) throw new Error(`出力先フォルダが見つかりません: ${folder}`)
+
+    // 元ファイルが分割結果で上書きされるのを防ぐ
+    for (const outPath of paths) {
+      if (isSamePath(outPath, this.originalPath || '')) {
+        throw new Error(`出力先が元ファイル（${basename(outPath)}）と同じです。別のフォルダを選んでください`)
+      }
+    }
+
+    const total = segments.length
+    for (let i = 0; i < total; i++) {
+      onProgress({ current: i + 1, total, name: names[i] })
+      const seg = segments[i]
+      const isLast = i === total - 1
+      try {
+        await encodeToFormat(cur.path, paths[i], {
+          start: seg.start,
+          // 最後の区間は入力の終わりまで（長さ指定の丸めで末尾を欠かさないため）
+          duration: isLast ? null : seg.end - seg.start,
+          totalDuration: cur.duration
+        })
+      } catch (err) {
+        this.removeTempFiles([paths[i]])
+        throw new Error(
+          `${i + 1}/${total} 個目（${names[i]}）の書き出しに失敗しました` +
+            (i > 0 ? `（${i} 個は書き出し済み）` : '') +
+            `: ${(err && err.message) || err}`
+        )
+      }
+    }
+    return { folder, count: total }
   }
 
   // 現在位置より後ろ（redo 対象）の版と、その一時ファイルを破棄する
