@@ -189,7 +189,7 @@ ipcMain.handle('audio:export', async () => {
   const result = await dialog.showSaveDialog({
     title: hasEdits ? '編集した音声を保存' : '音声を保存',
     defaultPath,
-    // 元ファイルと同じ形式をデフォルト（先頭）に並べる。MP4（動画）も選べる。
+    // 元ファイルと同じ形式をデフォルト（先頭）に並べる（MP4 を開いた場合は M4A）。MP4（動画）も選べる。
     filters: saveDialogFilters(ext)
   })
 
@@ -201,7 +201,7 @@ ipcMain.handle('audio:export', async () => {
 })
 
 // 「複数ファイルを結合」用のファイル選択ダイアログ（複数選択）。
-// 受け付ける形式は format.js の入力形式の定義に従う（MP4 は書き出し専用なので出さない）。
+// 受け付ける形式は format.js の入力形式の定義に従う（MP4 は音声だけを使う）。
 ipcMain.handle('dialog:openConcatFiles', async () => {
   const result = await dialog.showOpenDialog({
     title: '結合する音声ファイルを選択（複数選択可）',

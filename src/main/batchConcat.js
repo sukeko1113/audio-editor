@@ -1,4 +1,4 @@
-import { basename, join, resolve } from 'path'
+import { basename, join } from 'path'
 import { mkdtempSync, rmSync } from 'fs'
 import { tmpdir } from 'os'
 import { probeDuration } from './peaks.js'
@@ -9,6 +9,7 @@ import {
   encodeToFormat,
   isSameFormat,
   isSupportedInputPath,
+  isSamePath,
   INPUT_FORMATS_LABEL
 } from './format.js'
 import { MAX_DURATION, formatDurationJa } from './duration.js'
@@ -100,7 +101,7 @@ function fileError(filePath, action, err) {
 }
 
 // 受け付ける入力形式は format.js の定義に従う（読み込み・末尾への追加と同じ）。
-// MP4 は映像を含む書き出し専用の形式なので入力にはできない。
+// MP4 は音声だけを使う（convertToPcmWav が最初の音声ストリームだけを map する）。
 function assertSupportedInput(filePath) {
   if (!isSupportedInputPath(filePath)) {
     throw new Error(
@@ -111,13 +112,15 @@ function assertSupportedInput(filePath) {
 }
 
 // 各ファイルの長さ（秒）を ffprobe で取得する。メタデータのみ読むため軽量で、
-// 読めないファイルはこの時点で分かる。
+// 読めないファイル・音声ストリームを持たないファイル（映像のみの MP4 など）は
+// この時点で分かる。
 async function probeFiles(filePaths) {
   const files = []
   for (const filePath of filePaths) {
     assertSupportedInput(filePath)
     let duration
     try {
+      await probeAudioStream(filePath)
       duration = await probeDuration(filePath)
     } catch (err) {
       throw fileError(filePath, '読み込み', err)
@@ -148,11 +151,7 @@ export async function inspectFiles(filePaths) {
 
 // 出力先が入力ファイルのどれかと同じだと、結合の素材にしたファイルが結果で
 // 上書きされてしまう。保存ダイアログの上書き確認だけでは気づきにくいため弾く。
-function isSamePath(a, b) {
-  const pa = resolve(a)
-  const pb = resolve(b)
-  return process.platform === 'win32' ? pa.toLowerCase() === pb.toLowerCase() : pa === pb
-}
+// （パスの比較は format.js の isSamePath）
 
 /**
  * 一覧の順番どおりにファイルを結合し、outPath の拡張子が示す形式で書き出す。

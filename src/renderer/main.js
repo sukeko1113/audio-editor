@@ -787,9 +787,7 @@ async function runConcat() {
     `${result.fileCount} ファイルを結合して保存しました` +
     `（長さ: ${formatDurationJa(result.duration)}）: ${result.path}`
 
-  // MP4 は映像を含む書き出し専用の形式なので、編集対象としては読み込めない
-  if (result.video) return
-
+  // MP4 で保存した場合も、開けば映像を捨てて音声だけを編集対象にする
   const message = fileLoaded
     ? '結合したファイルを開きますか？\n現在編集中の内容は破棄されます。'
     : '結合したファイルを開きますか？'

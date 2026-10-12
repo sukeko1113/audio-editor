@@ -12,6 +12,10 @@ import { ffmpegPath, ffprobePath } from './binaries.js'
  * ものだけ ffmpeg で 16bit PCM WAV に変換してから扱う。
  *
  * サンプルレート・チャンネル数は元の値を維持し、コーデックのみ正規化する。
+ *
+ * MP4 は映像を捨てて音声だけを取り込む。ブラウザが再生できる AAC / MP3 なら
+ * 再エンコードせずコピーで取り出し（extractAudioToM4a）、それ以外は上記の
+ * 16bit PCM WAV 変換に回す。
  */
 
 // Chromium がそのままデコードできるコーデック。これらは変換しない。
@@ -23,6 +27,11 @@ import { ffmpegPath, ffprobePath } from './binaries.js'
 // すべて変換対象になる。WMA 系 (wmav1 / wmav2 / wmapro / wmalossless /
 // wmavoice) は意図的に載せていない＝つねに 16bit PCM WAV へ変換される。
 const PLAYABLE_CODECS = new Set(['pcm_s16le', 'mp3', 'aac', 'flac', 'vorbis', 'opus'])
+
+// MP4 から再エンコードなしで取り出して .m4a（MP4 コンテナ）に入れられるコーデック。
+// PLAYABLE_CODECS のうち、MP4 コンテナへのコピーが確実なものだけに絞っている
+// （flac / vorbis / opus などは MP4 への格納に制約があり、失敗しうるため WAV 変換に回す）。
+const M4A_COPYABLE_CODECS = new Set(['aac', 'mp3'])
 
 // ブラウザが扱えるサンプルレートの範囲（Web Audio がサポートする 3000〜384000Hz）。
 // これを外れる極端な値は再生できないため、FALLBACK_SAMPLE_RATE へ載せ替える。
@@ -78,7 +87,7 @@ export function probeAudioStream(filePath) {
         return
       }
       if (!stream) {
-        reject(new Error('音声ストリームが見つかりませんでした'))
+        reject(new Error('音声ストリームが見つかりませんでした（映像のみ、または音声を含まないファイルです）'))
         return
       }
       resolve({
@@ -134,6 +143,48 @@ export function normalizeToPcmWav(inputPath, outPath, info) {
     proc.on('close', (code) => {
       if (code !== 0) {
         reject(new Error(`ffmpeg normalize failed (code ${code}): ${err.trim()}`))
+        return
+      }
+      resolve()
+    })
+  })
+}
+
+/**
+ * MP4 の音声を、再エンコードせず .m4a へ取り出せるか。
+ * 再生できるコーデックで、サンプルレートも妥当なものに限る。
+ */
+export function canExtractAudioAsM4a(info) {
+  return M4A_COPYABLE_CODECS.has(info.codecName) && !needsNormalization(info)
+}
+
+/**
+ * MP4 から最初の音声ストリームだけを、再エンコードなし（-c:a copy）で
+ * .m4a へ取り出す。映像は捨てる（-vn）。巨大な一時 WAV を作らずに済む。
+ * 先頭に moov を置く（+faststart）ので、Range 配信での再生開始も早い。
+ * 元ファイルは変更しない。
+ */
+export function extractAudioToM4a(inputPath, outPath) {
+  return new Promise((resolve, reject) => {
+    const args = [
+      '-v', 'error',
+      '-nostdin',
+      '-i', inputPath,
+      '-map', '0:a:0',
+      '-vn',
+      '-c:a', 'copy',
+      '-f', 'mp4',
+      '-movflags', '+faststart',
+      '-y', outPath
+    ]
+
+    const proc = spawn(ffmpegPath, args)
+    let err = ''
+    proc.stderr.on('data', (d) => { err += d.toString() })
+    proc.on('error', reject)
+    proc.on('close', (code) => {
+      if (code !== 0) {
+        reject(new Error(`ffmpeg extract failed (code ${code}): ${err.trim()}`))
         return
       }
       resolve()
