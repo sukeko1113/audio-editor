@@ -48,7 +48,7 @@ contextBridge.exposeInMainWorld('api', {
   inspectConcatFiles: (filePaths) => ipcRenderer.invoke('concat:inspect', filePaths),
 
   // 渡した順番どおりに結合し、保存ダイアログで選んだパス/形式へ書き出す
-  // 返り値: { path, duration, fileCount, video }（video=true は MP4＝入力にはできない）、
+  // 返り値: { path, duration, fileCount, video }（video=true は MP4 で書き出した）、
   //         キャンセル時 null（失敗時は例外）
   runConcat: (filePaths) => ipcRenderer.invoke('concat:run', filePaths),
 

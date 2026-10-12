@@ -1,5 +1,5 @@
 import { spawn } from 'child_process'
-import { extname } from 'path'
+import { extname, resolve } from 'path'
 import { ffmpegPath } from './binaries.js'
 import { probeDuration } from './peaks.js'
 
@@ -30,16 +30,18 @@ import { probeDuration } from './peaks.js'
  *
  * WMA は入力専用。ffmpeg-static には wmav1 / wmav2 のエンコーダも含まれるが、
  * レガシー形式で新規に書き出す用途がないため出力形式には入れていない。
+ *
+ * MP4 は音声だけを取り込む（映像は読み込み時に捨てる。normalize.js 参照）。
+ * 出力形式としての MP4（黒一色の映像つき）とは別の話で、入力と出力の両方に使える。
  */
-const INPUT_EXTENSIONS = ['.mp3', '.wav', '.m4a', '.wma']
+const INPUT_EXTENSIONS = ['.mp3', '.wav', '.m4a', '.wma', '.mp4']
 
-// エラーメッセージやダイアログの表示に使う「MP3 / WAV / M4A / WMA」。
+// エラーメッセージやダイアログの表示に使う「MP3 / WAV / M4A / WMA / MP4」。
 // 対応形式を増やしたときに文言も一緒に変わるよう、一覧から組み立てる。
 export const INPUT_FORMATS_LABEL = INPUT_EXTENSIONS.map((e) => e.slice(1).toUpperCase()).join(' / ')
 
 /**
  * ファイル選択ダイアログ（開く／末尾に追加／一括結合）用のフィルタ。
- * MP4 は映像を含む書き出し専用の形式なので、ここには出さない。
  */
 export function inputDialogFilters() {
   return [
@@ -104,7 +106,7 @@ const VIDEO_ARGS = [
 // コンテナ／コーデック（＝ffprobe が返す名前）を1か所にまとめている。
 // 書き出しと判定で別々に定義を持つと、両者がずれたときに誤判定になるため。
 //   wav → pcm_s16le（16bit PCM） / mp3 → libmp3lame（192kbps） / m4a → aac（192kbps）
-//   mp4 → 黒一色の H.264 映像 ＋ aac（192kbps）。映像を含むため書き出し専用。
+//   mp4 → 黒一色の H.264 映像 ＋ aac（192kbps）。映像を含む出力形式（入力の MP4 は音声だけを取り込む）。
 // 並び順は保存ダイアログのフィルタの並びにもなる。
 const OUTPUT_FORMATS = {
   '.mp3': {
@@ -146,13 +148,28 @@ export function outputFormatFor(outPath) {
 }
 
 /**
- * 指定パスの拡張子が「映像を含む出力形式（MP4）」か。
- * 映像を含む形式は書き出し専用で、読み込み・末尾への追加・一括結合の
- * 入力としては受け付けない。
+ * 指定パスが MP4 か。MP4 を入力にすると映像は読み込み時に捨てられるため、
+ * 「元ファイルの中身＝書き出す音声」とは言えなくなる（形式変換の判定などで区別する）。
  */
-export function isVideoOutputPath(filePath) {
-  const format = OUTPUT_FORMATS[extname(filePath || '').toLowerCase()]
-  return !!(format && format.video)
+export function isMp4Path(filePath) {
+  return extname(filePath || '').toLowerCase() === '.mp4'
+}
+
+// 2つのパスが同じファイルを指すか。Windows は大文字小文字を区別しない。
+export function isSamePath(a, b) {
+  const pa = resolve(a)
+  const pb = resolve(b)
+  return process.platform === 'win32' ? pa.toLowerCase() === pb.toLowerCase() : pa === pb
+}
+
+/**
+ * 指定の出力パスが、元の MP4 を映像つきの MP4 で上書きしてしまう組み合わせか。
+ * MP4 を開くと映像は捨てて音声だけを扱うため、同じパスへ MP4 で書き出すと
+ * 元の映像が黒一色の映像に置き換わって失われる。
+ */
+export function overwritesSourceVideo(sourcePath, outPath) {
+  const format = OUTPUT_FORMATS[extname(outPath || '').toLowerCase()]
+  return !!(format && format.video && isMp4Path(sourcePath) && isSamePath(sourcePath, outPath))
 }
 
 /**
@@ -161,9 +178,12 @@ export function isVideoOutputPath(filePath) {
  * 通常は元ファイルと同じ形式にしたいが、入力にしか対応していない形式
  * （WMA）を開いている場合、その拡張子はそのまま出力できない。
  * 出力できない形式のときは MP3（もっとも一般的な出力形式）へ寄せる。
+ * MP4 は入力としては音声だけを取り込むので、音声のみの M4A を初期形式にする
+ * （MP4 のまま保存すると映像が黒一色に置き換わるため）。
  */
 export function defaultOutputExtension(preferredExt) {
   const ext = String(preferredExt || '').replace('.', '').toLowerCase()
+  if (ext === 'mp4') return 'm4a'
   return OUTPUT_FORMATS[`.${ext}`] ? ext : 'mp3'
 }
 

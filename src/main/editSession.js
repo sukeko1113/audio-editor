@@ -4,13 +4,20 @@ import { mkdtempSync, rmSync } from 'fs'
 import { tmpdir } from 'os'
 import { ffmpegPath } from './binaries.js'
 import { generatePeaks, probeDuration } from './peaks.js'
-import { probeAudioStream, needsNormalization, normalizeToPcmWav } from './normalize.js'
+import {
+  probeAudioStream,
+  needsNormalization,
+  normalizeToPcmWav,
+  canExtractAudioAsM4a,
+  extractAudioToM4a
+} from './normalize.js'
 import { convertToPcmWav, concatPcmWavs } from './concat.js'
 import {
   outputFormatFor,
   encodeToFormat,
   isSameFormat,
-  isVideoOutputPath,
+  isMp4Path,
+  overwritesSourceVideo,
   isSupportedInputPath,
   INPUT_FORMATS_LABEL
 } from './format.js'
@@ -162,24 +169,23 @@ export class EditSession {
    * すべてその正規化済みファイルを入力にする。元ファイルは変更しない。
    * 一時ファイルはセッションの一時ディレクトリに置かれるため、
    * 次の load / 終了時の reset() でまとめて破棄される。
+   *
+   * MP4 は映像を捨てて音声だけを扱う。AAC / MP3 ならコピーで一時 .m4a に取り出し、
+   * それ以外は 16bit PCM WAV へ変換する。どちらも編集ではないので op は付けない。
    */
   async load(filePath) {
-    // MP4 は映像トラックを足して書き出すための形式で、読み込みには対応しない。
-    // ファイル選択ダイアログでは絞り込んでいるが、「すべてのファイル」から
-    // 選べてしまうため、ここでも弾いて分かりやすいエラーにする。
-    if (isVideoOutputPath(filePath)) {
-      throw new Error(
-        `MP4 は書き出し専用の形式です（${INPUT_FORMATS_LABEL} を選択してください）`
-      )
-    }
-
     this.reset()
     this.originalPath = filePath
 
     let sourcePath = filePath
     let isTemp = false
     const info = await probeAudioStream(filePath)
-    if (needsNormalization(info)) {
+    if (isMp4Path(filePath) && canExtractAudioAsM4a(info)) {
+      const extractedPath = this.nextTempPath('m4a', 'source')
+      await extractAudioToM4a(filePath, extractedPath)
+      sourcePath = extractedPath
+      isTemp = true
+    } else if (needsNormalization(info) || isMp4Path(filePath)) {
       const normalizedPath = this.nextTempPath('wav', 'source')
       await normalizeToPcmWav(filePath, normalizedPath, info)
       sourcePath = normalizedPath
@@ -452,10 +458,19 @@ export class EditSession {
     // 未対応の拡張子は、ffmpeg を起動する前にここで弾く
     const format = outputFormatFor(outPath)
 
+    // 元の MP4 を、映像が黒一色になった MP4 で上書きしてしまう保存は止める
+    if (overwritesSourceVideo(this.originalPath, outPath)) {
+      throw new Error(
+        '元の MP4 と同じ場所には MP4 で保存できません（元の映像が失われます）。別の名前で保存してください'
+      )
+    }
+
     // 編集が1つも無ければ「形式変換だけの保存」。
     // 編集があれば、形式が同じでも書き出す内容は元ファイルと異なるので必ず書き出す。
+    // MP4 を開いた場合は映像を捨てた音声を書き出すので、M4A で保存しても元ファイルと
+    // 同じ中身にはならない（映像が無くなる）。「変更なし」の判定はしない。
     const conversionOnly = !this.hasEdits()
-    if (conversionOnly) {
+    if (conversionOnly && !isMp4Path(this.originalPath)) {
       const info = await probeAudioStream(this.originalPath)
       if (!needsNormalization(info) && isSameFormat(info, format)) {
         return { unchanged: true }

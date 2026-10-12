@@ -7,6 +7,12 @@
   box-sizing: border-box;
 }
 
+/* display: flex 等を指定したクラスでも、hidden 属性による非表示を必ず効かせる。
+   （著者スタイルの display が UA の [hidden] { display: none } を上書きしてしまうため） */
+[hidden] {
+  display: none !important;
+}
+
 body {
   margin: 0;
 }
@@ -229,10 +235,6 @@ body {
   padding: 24px;
   background: rgba(10, 10, 14, 0.6);
   z-index: 10;
-}
-
-.modal-overlay[hidden] {
-  display: none;
 }
 
 .modal {
