@@ -82,6 +82,18 @@
             <button id="volume-double-btn" class="btn" disabled>2倍</button>
             <button id="volume-mute-btn" class="btn" disabled>ミュート</button>
           </div>
+
+          <p class="edit-hint">
+            区切り：再生位置に区切り線を追加（M キー）。線はドラッグで移動、右クリックまたは選択して
+            Delete で削除できます。区切りは分割書き出し用で、元に戻す／やり直しの対象外です。
+          </p>
+          <div class="edit-actions marker-actions">
+            <button id="marker-add-btn" class="btn" disabled>区切りを追加</button>
+            <button id="marker-even-btn" class="btn" disabled>均等に区切る</button>
+            <span id="marker-count" class="region-count">区切り: 0</span>
+            <button id="marker-clear-btn" class="btn" disabled>区切りをすべて削除</button>
+            <button id="split-export-btn" class="btn btn-primary" disabled>分割して書き出し</button>
+          </div>
         </section>
 
         <p id="placeholder" class="placeholder">
@@ -110,6 +122,58 @@
         <div class="modal-actions">
           <button id="concat-cancel-btn" class="btn">キャンセル</button>
           <button id="concat-run-btn" class="btn btn-primary">結合して保存</button>
+        </div>
+      </div>
+    </div>
+
+    <!-- 均等に区切る：分割数の入力ダイアログ -->
+    <div id="even-overlay" class="modal-overlay" hidden>
+      <div
+        class="modal modal-narrow"
+        role="dialog"
+        aria-modal="true"
+        aria-labelledby="even-title"
+      >
+        <h2 id="even-title" class="modal-title">均等に区切る</h2>
+        <p class="modal-hint">
+          全体を指定の数に等分する位置へ、区切り線（分割数 − 1 本）を置きます。
+        </p>
+        <div class="field-row">
+          <label for="even-input" class="field-label">分割数</label>
+          <input id="even-input" class="volume-input" type="number" min="2" step="1" value="2" />
+        </div>
+        <p id="even-info" class="modal-hint"></p>
+        <p id="even-error" class="concat-warning" hidden></p>
+        <div class="modal-actions">
+          <button id="even-cancel-btn" class="btn">キャンセル</button>
+          <button id="even-run-btn" class="btn btn-primary">区切る</button>
+        </div>
+      </div>
+    </div>
+
+    <!-- 分割して書き出し：出力形式と出力先フォルダの選択ダイアログ -->
+    <div id="split-overlay" class="modal-overlay" hidden>
+      <div
+        class="modal"
+        role="dialog"
+        aria-modal="true"
+        aria-labelledby="split-title"
+      >
+        <h2 id="split-title" class="modal-title">分割して書き出し</h2>
+        <div class="field-row">
+          <label for="split-format" class="field-label">出力形式</label>
+          <select id="split-format" class="field-select"></select>
+        </div>
+        <div class="field-row">
+          <label for="split-folder" class="field-label">出力先</label>
+          <input id="split-folder" class="field-text" type="text" readonly />
+          <button id="split-folder-btn" class="btn">参照…</button>
+        </div>
+        <p id="split-summary" class="concat-summary"></p>
+        <p id="split-progress" class="concat-progress" hidden></p>
+        <div class="modal-actions">
+          <button id="split-cancel-btn" class="btn">キャンセル</button>
+          <button id="split-run-btn" class="btn btn-primary">書き出す</button>
         </div>
       </div>
     </div>

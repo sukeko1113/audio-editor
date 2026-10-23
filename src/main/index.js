@@ -1,9 +1,14 @@
 import { app, BrowserWindow, ipcMain, dialog, protocol } from 'electron'
-import { join, extname, basename } from 'path'
+import { join, extname, basename, dirname } from 'path'
 import { createReadStream, statSync } from 'fs'
 import { Readable } from 'stream'
 import { EditSession } from './editSession.js'
-import { saveDialogFilters, inputDialogFilters, defaultOutputExtension } from './format.js'
+import {
+  saveDialogFilters,
+  inputDialogFilters,
+  defaultOutputExtension,
+  outputFormatList
+} from './format.js'
 import { concatToFile, inspectFiles } from './batchConcat.js'
 
 // 編集セッション（版履歴とカット処理を管理）。
@@ -198,6 +203,48 @@ ipcMain.handle('audio:export', async () => {
   }
 
   return session.export(result.filePath)
+})
+
+// --- 区切り線による分割書き出し ---
+
+// 分割書き出しダイアログの初期値：出力形式の一覧と、出力先フォルダ（元ファイルと同じ場所）。
+ipcMain.handle('split:options', async () => {
+  if (!session.currentPath()) {
+    throw new Error('音声が読み込まれていません')
+  }
+  return {
+    formats: outputFormatList(),
+    defaultExt: defaultOutputExtension(session.originalExtension()),
+    folder: dirname(session.originalPath || '')
+  }
+})
+
+// 出力先フォルダの選択ダイアログ。キャンセル時は null。
+ipcMain.handle('dialog:selectFolder', async (_event, defaultPath) => {
+  const result = await dialog.showOpenDialog({
+    title: '分割したファイルの出力先フォルダを選択',
+    defaultPath: defaultPath || undefined,
+    properties: ['openDirectory', 'createDirectory']
+  })
+  if (result.canceled || result.filePaths.length === 0) {
+    return null
+  }
+  return result.filePaths[0]
+})
+
+// 書き出すファイル名の一覧と、そのうち出力先にすでに存在するものを返す（確認表示・上書き確認用）。
+ipcMain.handle('split:check', async (_event, { markers, ext, folder }) => {
+  return session.splitCheck(markers, ext, folder)
+})
+
+// 区切り位置で分割して書き出す。進捗は 'split:progress' でレンダラーへ随時送る。
+// 返り値: { folder, count }（失敗時は例外）
+ipcMain.handle('split:run', async (event, { markers, ext, folder }) => {
+  return session.exportSplit(markers, ext, folder, (progress) => {
+    if (!event.sender.isDestroyed()) {
+      event.sender.send('split:progress', progress)
+    }
+  })
 })
 
 // 「複数ファイルを結合」用のファイル選択ダイアログ（複数選択）。
